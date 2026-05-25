@@ -1,3 +1,5 @@
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=Plus+Jakarta+Sans:wght@500;600;700&display=swap');
+
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
@@ -9,13 +11,49 @@
 }
 
 body {
-  font-family: 'Segoe UI', sans-serif;
-  background-color: #f3f4f6;
-  color: #111827;
+  font-family: 'Inter', 'Plus Jakarta Sans', 'Segoe UI', sans-serif;
+  background-color: #020617;
+  color: #e2e8f0;
 }
 
 .btn-primary {
   @apply bg-primary text-white px-4 py-2 rounded-lg hover:bg-secondary transition-colors duration-200 font-medium;
+}
+
+@keyframes float-up {
+  0% {
+    transform: translateY(0px);
+  }
+  50% {
+    transform: translateY(-12px);
+  }
+  100% {
+    transform: translateY(0px);
+  }
+}
+
+@keyframes shimmer {
+  0% {
+    background-position: -220px 0;
+  }
+  100% {
+    background-position: 220px 0;
+  }
+}
+
+.slide-card {
+  animation: float-up 8s ease-in-out infinite;
+  background-image: linear-gradient(135deg, rgba(14, 116, 144, 0.08), rgba(15, 23, 42, 0.9));
+}
+
+.hero-highlight {
+  background: linear-gradient(90deg, rgba(34,197,94,0.18), rgba(6,182,212,0.14));
+}
+
+.shimmer-bar {
+  background: linear-gradient(90deg, rgba(255,255,255,0.08) 0%, rgba(255,255,255,0.25) 50%, rgba(255,255,255,0.08) 100%);
+  background-size: 220px 100%;
+  animation: shimmer 2.2s linear infinite;
 }
 
 .btn-secondary {

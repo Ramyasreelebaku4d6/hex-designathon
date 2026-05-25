@@ -8,8 +8,7 @@ class Settings(BaseSettings):    # Azure SQL
     SQL_PASSWORD: str
     SQL_SERVER: str
     SQL_DATABASE: str
-    SQL_DRIVER: str = "ODBC Driver 18 for SQL Server"
-
+    SQL_DRIVER: str
     # Azure AI Foundry
     MODEL_ENDPOINT: str
     MODEL_NAME: str

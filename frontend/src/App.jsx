@@ -12,6 +12,7 @@ import Results from "./pages/Results";
 import Vouchers from "./pages/Vouchers";
 import AuditLog from "./pages/AuditLog";
 import Redeem from "./pages/Redeem";
+import Welcome from "./pages/Welcome";
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -101,9 +102,10 @@ function AppRoutes() {
         }
       />
 
-      {/* Default redirect */}
-      <Route path="/" element={<Navigate to="/dashboard" replace />} />
-      <Route path="*" element={<Navigate to="/dashboard" replace />} />
+      {/* Public welcome and login */}
+      <Route path="/" element={<Welcome />} />
+      <Route path="/welcome" element={<Welcome />} />
+      <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>
   );
 }
