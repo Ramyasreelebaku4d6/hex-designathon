@@ -149,3 +149,40 @@ class DashboardStats(BaseModel):
     passed_count: int
     vouchers_issued: int
     vouchers_redeemed: int
+
+# --- Certifications ---
+class CertificationCreate(BaseModel):
+    name: str
+    code: Optional[str] = None
+
+class CertificationResponse(BaseModel):
+    id: str
+    name: str
+    code: Optional[str]
+    is_custom: bool
+    class Config:
+        from_attributes = True
+
+class DriveCertificationAdd(BaseModel):
+    cert_id: Optional[str] = None
+    name: Optional[str] = None  # for new cert
+    code: Optional[str] = None
+
+# --- Slots ---
+class SlotResponse(BaseModel):
+    id: str
+    slot_datetime: datetime
+    is_booked: bool
+    booked_by_reg_id: Optional[str]
+    class Config:
+        from_attributes = True
+
+# --- Updated Registration ---
+class RegistrationCreate(BaseModel):
+    drive_id: str
+    cert_id: Optional[str] = None
+    custom_cert_name: Optional[str] = None
+    is_custom_cert: Optional[bool] = False
+    slot_id: Optional[str] = None
+    exam_track: Optional[str] = None
+    slot_datetime: Optional[datetime] = None

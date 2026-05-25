@@ -10,6 +10,12 @@ from app.routers import (
 )
 from app.scheduler import start_scheduler
 
+from app.routers import (
+    auth, drives, registrations,
+    eligibility, results, vouchers,
+    audit, dashboard, certifications, slots  # add these two
+)
+from app.routers import exam
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -41,7 +47,17 @@ app.include_router(results.router, prefix="/api/results", tags=["results"])
 app.include_router(vouchers.router, prefix="/api/vouchers", tags=["vouchers"])
 app.include_router(audit.router, prefix="/api/audit", tags=["audit"])
 app.include_router(dashboard.router, prefix="/api/dashboard", tags=["dashboard"])
-
+app.include_router(
+    certifications.router,
+    prefix="/api/certifications",
+    tags=["certifications"]
+)
+app.include_router(
+    slots.router,
+    prefix="/api/slots",
+    tags=["slots"]
+)
+app.include_router(exam.router, prefix="/api/exam", tags=["exam"])
 
 @app.get("/")
 def root():

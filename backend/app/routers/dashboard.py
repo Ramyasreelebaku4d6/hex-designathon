@@ -209,7 +209,7 @@ def candidate_dashboard(
     db: Session = Depends(get_db),
     current_user=Depends(get_current_user)
 ):
-    # All my registrations
+    from app.models import ExamSession, UserCertificate
     my_regs = db.query(Registration).filter(
         Registration.user_id == current_user.id
     ).order_by(Registration.created_at.desc()).all()
@@ -226,45 +226,86 @@ def candidate_dashboard(
         voucher = db.query(Voucher).filter(
             Voucher.registration_id == reg.id
         ).first()
+        exam_session = db.query(ExamSession).filter(
+            ExamSession.registration_id == reg.id
+        ).first()
+        certificate = db.query(UserCertificate).filter(
+            UserCertificate.registration_id == reg.id
+        ).first()
 
-        # Days until voucher expiry
         days_to_expiry = None
         if voucher and voucher.expiry_date and voucher.status == "issued":
             delta = voucher.expiry_date - datetime.utcnow()
             days_to_expiry = max(0, delta.days)
 
+        # Slot timing
+        slot_info = None
+        if reg.slot_datetime:
+            now = datetime.utcnow()
+            diff = reg.slot_datetime - now
+            diff_days = diff.total_seconds() / 86400
+            slot_info = {
+                "datetime": reg.slot_datetime,
+                "diff_days": round(diff_days, 2),
+                "is_past": diff_days < 0,
+            }
+
         registrations.append({
             "registration_id": reg.id,
             "drive_name": drive.name if drive else "Unknown",
+            "drive_id": reg.drive_id,
             "exam_track": reg.exam_track,
+            "cert_id": reg.cert_id,
+            "custom_cert_name": reg.custom_cert_name,
+            "is_custom_cert": reg.is_custom_cert,
             "slot_datetime": reg.slot_datetime,
+            "slot_info": slot_info,
             "status": reg.status,
+            "course_completed": reg.course_completed,
+            "prior_attempts": reg.prior_attempts,
             "created_at": reg.created_at,
             "eligibility": {
-                "decision": eligibility.decision if eligibility else None,
-                "ai_score": eligibility.ai_score if eligibility else None,
-                "ai_reasons": eligibility.ai_reasons if eligibility else None,
+                "id": eligibility.id,
+                "decision": eligibility.decision,
+                "ai_score": eligibility.ai_score,
+                "ai_reasons": eligibility.ai_reasons,
             } if eligibility else None,
             "result": {
-                "score": result.score if result else None,
-                "outcome": result.outcome if result else None,
-                "exam_date": result.exam_date if result else None,
+                "score": result.score,
+                "outcome": result.outcome,
+                "exam_date": result.exam_date,
             } if result else None,
             "voucher": {
-                "status": voucher.status if voucher else None,
-                "vendor": voucher.vendor if voucher else None,
-                "masked_code": voucher.masked_code if voucher else None,
-                "expiry_date": voucher.expiry_date if voucher else None,
-                "tokenized_link": voucher.tokenized_link if voucher else None,
+                "id": voucher.id,
+                "status": voucher.status,
+                "vendor": voucher.vendor,
+                "masked_code": voucher.masked_code,
+                "expiry_date": voucher.expiry_date,
+                "tokenized_link": voucher.tokenized_link,
                 "days_to_expiry": days_to_expiry,
             } if voucher else None,
+            "exam_session": {
+                "id": exam_session.id,
+                "status": exam_session.status,
+                "started_at": exam_session.started_at,
+                "submitted_at": exam_session.submitted_at,
+            } if exam_session else None,
+            "certificate": {
+                "id": certificate.id,
+                "cert_name": certificate.cert_name,
+                "issued_date": certificate.issued_date,
+                "expiry_date": certificate.expiry_date,
+                "status": certificate.status,
+                "days_remaining": max(
+                    0,
+                    (certificate.expiry_date - datetime.utcnow()).days
+                ),
+            } if certificate else None,
         })
 
-    # Active drives available to register
-    already_registered_drive_ids = [r.drive_id for r in my_regs]
     available_drives = db.query(Drive).filter(
         Drive.status == "active",
-        ~Drive.id.in_(already_registered_drive_ids)
+        ~Drive.id.in_([r.drive_id for r in my_regs])
     ).all()
 
     return {
