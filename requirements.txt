@@ -1,0 +1,16 @@
+fastapi
+uvicorn[standard]
+sqlalchemy
+alembic
+pyodbc
+aioodbc
+python-dotenv
+python-jose[cryptography]
+bcrypt==4.0.1
+apscheduler
+cryptography
+httpx
+openai
+pandas
+python-multipart
+email-validator
