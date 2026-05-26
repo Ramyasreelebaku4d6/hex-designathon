@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, useRef  } from "react";
 import { useParams } from "react-router-dom";
 import { redeemVoucher } from "../api/vouchers";
 import { CheckCircle, XCircle } from "lucide-react";
@@ -8,8 +8,11 @@ export default function Redeem() {
   const [result, setResult] = useState(null);
   const [error, setError] = useState(null);
   const [loading, setLoading] = useState(true);
+  const hasCalled = useRef(false);
 
   useEffect(() => {
+    if (hasCalled.current) return; // ← skip if already called
+    hasCalled.current = true;
     redeemVoucher(token)
       .then((data) => setResult(data))
       .catch((err) =>
