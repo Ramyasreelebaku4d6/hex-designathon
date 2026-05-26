@@ -16,6 +16,7 @@ from app.routers import (
     audit, dashboard, certifications, slots  # add these two
 )
 from app.routers import exam
+from app.routers import microsoft_auth
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -58,6 +59,11 @@ app.include_router(
     tags=["slots"]
 )
 app.include_router(exam.router, prefix="/api/exam", tags=["exam"])
+app.include_router(
+    microsoft_auth.router,
+    prefix="/api/auth/microsoft",
+    tags=["microsoft-auth"]
+)
 
 @app.get("/")
 def root():

@@ -24,3 +24,15 @@ export const updateDriveStatus = async (id, status) => {
   const res = await client.patch(`/api/drives/${id}/status?status=${status}`);
   return res.data;
 };
+
+export const generateDriveVouchers = async (driveId) => {
+  const res = await client.post(`/api/drives/${driveId}/generate-vouchers`);
+  return res.data;
+};
+
+export const addMoreVouchers = async (driveId, additionalBudget) => {
+  const res = await client.post(
+    `/api/drives/${driveId}/add-vouchers?additional_budget=${additionalBudget}`
+  );
+  return res.data;
+};

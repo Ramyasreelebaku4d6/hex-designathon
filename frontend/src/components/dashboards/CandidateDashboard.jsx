@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { getCandidateDashboard } from "../../api/dashboard";
-import { getMyCertificates, verifyVoucher, startExam, submitExam,completeCourse } from "../../api/exam";
+import { getMyCertificates, verifyVoucher, startExam, submitExam,completeCourse,downloadCertificate   } from "../../api/exam";
 import { useAuth } from "../../context/AuthContext";
 import { useNavigate } from "react-router-dom";
 import {
@@ -498,7 +498,10 @@ function RegistrationCard({ reg, onRefresh }) {
               <p className="text-xs text-green-600">
                 {reg.certificate.days_remaining} days remaining
               </p>
-              <button className="w-full flex items-center justify-center gap-2 bg-green-600 text-white py-2 rounded-lg text-sm hover:bg-green-700">
+              <button
+                onClick={() => downloadCertificate(reg.certificate.id)}
+                className="w-full flex items-center justify-center gap-2 bg-green-600 text-white py-2 rounded-lg text-sm hover:bg-green-700"
+              >
                 <Download size={14} />
                 Download Certificate (PDF)
               </button>
@@ -616,7 +619,10 @@ function MyCertifications() {
                   <p className="text-xs text-green-600">
                     {cert.days_remaining} days remaining
                   </p>
-                  <button className="flex items-center gap-1.5 text-xs bg-green-600 text-white px-3 py-1.5 rounded-lg hover:bg-green-700">
+                  <button
+                    onClick={() => downloadCertificate(cert.id)}
+                    className="flex items-center gap-1.5 text-xs bg-green-600 text-white px-3 py-1.5 rounded-lg hover:bg-green-700"
+                  >
                     <Download size={12} />
                     Download PDF
                   </button>

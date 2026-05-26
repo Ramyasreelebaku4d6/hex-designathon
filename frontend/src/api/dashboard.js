@@ -34,3 +34,8 @@ export const getPassFail = async () => {
   const res = await client.get("/api/dashboard/pass-fail");
   return res.data;
 };
+
+export const getVoucherStats = async () => {
+  const res = await client.get("/api/dashboard/voucher-stats");
+  return res.data;
+};

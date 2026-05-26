@@ -17,17 +17,26 @@ export function AuthProvider({ children }) {
     setLoading(false);
   }, []);
 
+
   const login = async (email, password) => {
     const data = await loginApi(email, password);
+    localStorage.setItem("token", data.access_token);
+    localStorage.setItem("role", data.role);
+    localStorage.setItem("name", data.name);
+    setUser({ token: data.access_token, role: data.role, name: data.name });
+    return data;
+  };
+
+  // ── New: used after Microsoft SSO callback ──────────────────────
+  const loginWithToken = (data) => {
     localStorage.setItem("token", data.access_token);
     localStorage.setItem("role", data.role);
     localStorage.setItem("name", data.name);
     setUser({
       token: data.access_token,
       role: data.role,
-      name: data.name,
+      name: data.name
     });
-    return data;
   };
 
   const logout = () => {
@@ -37,7 +46,7 @@ export function AuthProvider({ children }) {
   };
 
   return (
-    <AuthContext.Provider value={{ user, login, logout, loading }}>
+    <AuthContext.Provider value={{ user, login, loginWithToken, logout, loading }}>
       {children}
     </AuthContext.Provider>
   );

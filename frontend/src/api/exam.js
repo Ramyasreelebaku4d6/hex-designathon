@@ -30,3 +30,19 @@ export const completeCourse = async (registrationId) => {
   );
   return res.data;
 };
+
+export const downloadCertificate = async (certificateId) => {
+  const res = await client.get(
+    `/api/exam/certificates/${certificateId}/download`,
+    { responseType: "blob" }
+  );
+  // Create download link
+  const url = window.URL.createObjectURL(new Blob([res.data]));
+  const link = document.createElement("a");
+  link.href = url;
+  link.setAttribute("download", `certificate_${certificateId.slice(0, 8)}.pdf`);
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  window.URL.revokeObjectURL(url);
+};

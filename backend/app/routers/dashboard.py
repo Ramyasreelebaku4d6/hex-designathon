@@ -1,13 +1,14 @@
 from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session
-from sqlalchemy import func, and_
+from sqlalchemy import func
 from datetime import datetime, timedelta
 from app.database import get_db
 from app.models import (
     Drive, Registration, Eligibility,
-    AssessmentResult, Voucher, User, AuditLog
+    AssessmentResult, Voucher, User,
+    AuditLog, DriveCertification, Certification
 )
-from app.auth import get_current_user
+from app.auth import get_current_user, require_role
 
 router = APIRouter()
 
@@ -354,3 +355,94 @@ def get_pass_fail(
     passed = db.query(AssessmentResult).filter(AssessmentResult.outcome == "pass").count()
     failed = db.query(AssessmentResult).filter(AssessmentResult.outcome == "fail").count()
     return [{"outcome": "Pass", "count": passed}, {"outcome": "Fail", "count": failed}]
+
+@router.get("/voucher-stats")
+def get_voucher_stats(
+    db: Session = Depends(get_db),
+    current_user=Depends(require_role("admin", "coordinator"))
+):
+    from app.models import Certification
+
+    drives = db.query(Drive).all()
+    result = []
+
+    for drive in drives:
+        drive_certs = db.query(DriveCertification).filter(
+            DriveCertification.drive_id == drive.id
+        ).all()
+
+        cert_stats = []
+        drive_total = {"unassigned": 0, "issued": 0, "redeemed": 0, "expired": 0}
+        all_exhausted = True
+
+        for dc in drive_certs:
+            cert = db.query(Certification).filter(
+                Certification.id == dc.cert_id
+            ).first()
+            if not cert:
+                continue
+
+            unassigned = db.query(Voucher).filter(
+                Voucher.drive_id == drive.id,
+                Voucher.cert_id == cert.id,
+                Voucher.status == "unassigned"
+            ).count()
+            issued = db.query(Voucher).filter(
+                Voucher.drive_id == drive.id,
+                Voucher.cert_id == cert.id,
+                Voucher.status == "issued"
+            ).count()
+            redeemed = db.query(Voucher).filter(
+                Voucher.drive_id == drive.id,
+                Voucher.cert_id == cert.id,
+                Voucher.status == "redeemed"
+            ).count()
+            expired = db.query(Voucher).filter(
+                Voucher.drive_id == drive.id,
+                Voucher.cert_id == cert.id,
+                Voucher.status == "expired"
+            ).count()
+            total = unassigned + issued + redeemed + expired
+
+            if unassigned > 0:
+                all_exhausted = False
+
+            cert_stats.append({
+                "cert_id": cert.id,
+                "cert_name": cert.name,
+                "unassigned": unassigned,
+                "issued": issued,
+                "redeemed": redeemed,
+                "expired": expired,
+                "total": total,
+                "utilization_pct": round(
+                    (redeemed / total * 100) if total > 0 else 0, 1
+                ),
+                "is_exhausted": unassigned == 0
+            })
+
+            drive_total["unassigned"] += unassigned
+            drive_total["issued"] += issued
+            drive_total["redeemed"] += redeemed
+            drive_total["expired"] += expired
+
+        total_drive = sum(drive_total.values())
+        result.append({
+            "drive_id": drive.id,
+            "drive_name": drive.name,
+            "drive_status": drive.status,
+            "budget": drive.budget,
+            "start_date": drive.start_date,
+            "end_date": drive.end_date,
+            "certifications": cert_stats,
+            "totals": drive_total,
+            "total_vouchers": total_drive,
+            "utilization_pct": round(
+                (drive_total["redeemed"] / total_drive * 100)
+                if total_drive > 0 else 0, 1
+            ),
+            "all_certs_exhausted": all_exhausted,
+            "can_add_vouchers": drive.status == "active"
+        })
+
+    return result
