@@ -2,7 +2,6 @@ from urllib.parse import quote_plus
 
 from pydantic_settings import BaseSettings
 
-
 class Settings(BaseSettings):    # Azure SQL
     SQL_USER_NAME: str
     SQL_PASSWORD: str
@@ -16,6 +15,11 @@ class Settings(BaseSettings):    # Azure SQL
     MODEL_SUBSCRIPTION_KEY: str
     MODEL_API_VERSION: str = "2024-02-01"
 
+    # Microsoft SSO
+    MICROSOFT_CLIENT_ID: str = ""
+    MICROSOFT_CLIENT_SECRET: str = ""
+    MICROSOFT_TENANT_ID: str = ""
+    MICROSOFT_REDIRECT_URI: str = "http://localhost:5173/auth/callback"
     # App settings
     SECRET_KEY: str
     ALGORITHM: str = "HS256"
@@ -26,6 +30,7 @@ class Settings(BaseSettings):    # Azure SQL
     SMTP_PORT: int = 587
     SMTP_USER: str = ""
     SMTP_PASSWORD: str = ""
+    SENDGRID_API_KEY: str = ""
 
     @property
     def DATABASE_URL(self) -> str:

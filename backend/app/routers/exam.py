@@ -9,7 +9,8 @@ from app.models import (
 from app.auth import get_current_user, require_role
 from app.core.security import decrypt_voucher_code
 from app.core.audit_logger import write_audit_log
-
+from fastapi.responses import Response
+from app.services.certificate_service import generate_certificate_pdf
 import uuid
 
 router = APIRouter()
@@ -87,7 +88,7 @@ def start_exam(
     if not reg:
         raise HTTPException(status_code=404, detail="Registration not found")
 
-    # Check slot time
+    # ── Check slot time ──────────────────────────────────────────────
     now = datetime.utcnow()
     if reg.slot_datetime and reg.slot_datetime > now:
         raise HTTPException(
@@ -95,7 +96,7 @@ def start_exam(
             detail="Exam slot has not started yet"
         )
 
-    # Verify voucher
+    # ── Verify voucher code ──────────────────────────────────────────
     voucher = db.query(Voucher).filter(
         Voucher.registration_id == registration_id
     ).first()
@@ -106,7 +107,19 @@ def start_exam(
     if voucher_code.strip() != decrypted.strip():
         raise HTTPException(status_code=400, detail="Invalid voucher code")
 
-    # Create exam session
+    # ── Check no active session already ─────────────────────────────
+    existing_session = db.query(ExamSession).filter(
+        ExamSession.registration_id == registration_id,
+        ExamSession.status == "started"
+    ).first()
+    if existing_session:
+        return {
+            "session_id": existing_session.id,
+            "started_at": existing_session.started_at,
+            "message": "Exam already in progress"
+        }
+
+    # ── Create exam session ──────────────────────────────────────────
     session = ExamSession(
         id=str(uuid.uuid4()),
         registration_id=registration_id,
@@ -115,13 +128,107 @@ def start_exam(
         status="started"
     )
     db.add(session)
+
+    # ── Increment prior_attempts immediately on exam start ───────────
+    # This counts as an attempt regardless of whether
+    # the candidate completes or abandons the exam
+    reg.prior_attempts = (reg.prior_attempts or 0) + 1
+    reg.status = "exam_started"
+
     db.commit()
+    db.refresh(session)
+
+    # ── Also update prior_attempts on ALL future registrations ───────
+    # for the same certification by this user in other drives
+    # so the attempt limit check works correctly going forward
+    _sync_attempts_across_drives(
+        user_id=current_user.id,
+        cert_id=reg.cert_id,
+        exam_track=reg.exam_track,
+        db=db
+    )
+
+    write_audit_log(
+        db=db,
+        entity_type="ExamSession",
+        entity_id=session.id,
+        action="exam_started",
+        actor_id=current_user.id,
+        after={
+            "registration_id": registration_id,
+            "prior_attempts_after": reg.prior_attempts,
+            "cert": reg.exam_track
+        }
+    )
+
+    print(
+        f"[EXAM] Started for reg {registration_id}. "
+        f"Attempts now: {reg.prior_attempts}"
+    )
 
     return {
         "session_id": session.id,
         "started_at": now,
-        "message": "Exam started"
+        "message": "Exam started",
+        "attempts_recorded": reg.prior_attempts
     }
+
+
+def _sync_attempts_across_drives(
+    user_id: str,
+    cert_id: str,
+    exam_track: str,
+    db: Session
+):
+    """
+    Recalculate prior_attempts for all registrations
+    of this user for the same certification.
+    Ensures future eligibility checks are accurate.
+    """
+    try:
+        # Get all registrations for this user
+        all_regs = db.query(Registration).filter(
+            Registration.user_id == user_id
+        ).all()
+
+        # Count total started/submitted exams for this cert
+        total_attempts = 0
+        cert_reg_ids = []
+
+        for r in all_regs:
+            # Match by cert_id or exam_track name
+            is_same_cert = (
+                (cert_id and r.cert_id == cert_id) or
+                (exam_track and r.exam_track and
+                 exam_track.lower() == r.exam_track.lower())
+            )
+            if is_same_cert:
+                cert_reg_ids.append(r.id)
+                # Count exam sessions that were started
+                sessions = db.query(ExamSession).filter(
+                    ExamSession.registration_id == r.id,
+                    ExamSession.status.in_(["started", "submitted"])
+                ).count()
+                total_attempts += sessions
+
+        # Update prior_attempts on all matching registrations
+        for r in all_regs:
+            is_same_cert = (
+                (cert_id and r.cert_id == cert_id) or
+                (exam_track and r.exam_track and
+                 exam_track.lower() == r.exam_track.lower())
+            )
+            if is_same_cert:
+                r.prior_attempts = total_attempts
+
+        db.commit()
+        print(
+            f"[ATTEMPTS] Synced {total_attempts} attempts "
+            f"across {len(cert_reg_ids)} registrations"
+        )
+
+    except Exception as e:
+        print(f"[ATTEMPTS] Sync failed: {e}")
 
 @router.post("/submit/{session_id}")
 def submit_exam(
@@ -156,6 +263,7 @@ def submit_exam(
         reg.status = "exam_submitted"
     db.commit()
 
+
     # ── Auto-generate certificate ────────────────────────────────────
     try:
         existing_cert = db.query(UserCertificate).filter(
@@ -182,6 +290,30 @@ def submit_exam(
             db.commit()
             db.refresh(cert)
             print(f"[CERT] Auto-generated certificate {cert.id} for reg {reg.id}")
+
+            # ── Send certificate completion email ────────────────────────
+            user = db.query(User).filter(User.id == reg.user_id).first()
+            drive = db.query(Drive).filter(Drive.id == reg.drive_id).first()
+
+            if user:
+                from app.services.email_service import (
+                    send_certificate_completion_email
+                )
+                download_url = (
+                    f"http://localhost:5173/api/exam/"
+                    f"certificates/{cert.id}/download"
+                )
+                send_certificate_completion_email(
+                    to_email=user.email,
+                    name=user.name,
+                    cert_name=cert_name,
+                    drive_name=drive.name if drive else "Certification Drive",
+                    issued_date=now.strftime("%d %B %Y"),
+                    expiry_date=expiry.strftime("%d %B %Y"),
+                    certificate_id=cert.id,
+                    download_url=download_url
+                )
+                print(f"[CERT] Certificate email sent to {user.email}")
 
     except Exception as e:
         print(f"[CERT] Auto-generation failed: {e}")
@@ -318,3 +450,40 @@ async def complete_course(
         "voucher_allocated": voucher is not None,
         "voucher_id": voucher.id if voucher else None
     }
+
+@router.get("/certificates/{certificate_id}/download")
+def download_certificate(
+    certificate_id: str,
+    db: Session = Depends(get_db),
+    current_user=Depends(get_current_user)
+):
+    cert = db.query(UserCertificate).filter(
+        UserCertificate.id == certificate_id,
+        UserCertificate.user_id == current_user.id
+    ).first()
+    if not cert:
+        raise HTTPException(status_code=404, detail="Certificate not found")
+
+    # Get related data
+    user = db.query(User).filter(User.id == cert.user_id).first()
+    drive = db.query(Drive).filter(Drive.id == cert.drive_id).first()
+
+    # Generate PDF
+    pdf_bytes = generate_certificate_pdf(
+        candidate_name=user.name if user else "Candidate",
+        cert_name=cert.cert_name,
+        drive_name=drive.name if drive else "Certification Drive",
+        issued_date=cert.issued_date,
+        expiry_date=cert.expiry_date,
+        certificate_id=cert.id,
+    )
+
+    filename = f"certificate_{cert.cert_name.replace(' ', '_')}_{cert.id[:8]}.pdf"
+
+    return Response(
+        content=pdf_bytes,
+        media_type="application/pdf",
+        headers={
+            "Content-Disposition": f"attachment; filename={filename}"
+        }
+    )

@@ -23,7 +23,7 @@ class User(Base):
     tenure_start_date = Column(DateTime)
     role = Column(String(20), default="candidate")
     created_at = Column(DateTime, server_default=func.now())
-
+    microsoft_id = Column(String(100), nullable=True)
     registrations = relationship("Registration", back_populates="user")
 
 class Drive(Base):
@@ -117,7 +117,7 @@ class Voucher(Base):
     tokenized_link = Column(String(500))
     delivered_at = Column(DateTime)
     redeemed_at = Column(DateTime)
-
+    cert_id = Column(String(36), nullable=True)
     drive = relationship("Drive", back_populates="vouchers")
     registration = relationship("Registration", back_populates="voucher")
 

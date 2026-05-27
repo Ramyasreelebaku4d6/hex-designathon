@@ -7,21 +7,43 @@ async def evaluate_eligibility(
     registration: Registration,
     db: Session
 ) -> dict:
+    from app.models import ExamSession
+
     user = db.query(User).filter(
         User.id == registration.user_id
     ).first()
 
-    # ── Rule 1: Tenure check (≥90 days) ─────────────────────────────
+    # ── Rule 1: Tenure ───────────────────────────────────────────────
     tenure_ok = False
     tenure_days = 0
     if user.tenure_start_date:
         tenure_days = (datetime.utcnow() - user.tenure_start_date).days
         tenure_ok = tenure_days >= 90
 
-    # ── Rule 2: Attempt limit (< 2 in any previous drive) ───────────
-    attempts_ok = registration.prior_attempts < 2
+    # ── Rule 2: Attempt limit ────────────────────────────────────────
+    # Count actual exam sessions started for same cert across all drives
+    all_user_regs = db.query(Registration).filter(
+        Registration.user_id == registration.user_id,
+        Registration.id != registration.id  # exclude current
+    ).all()
 
-    # ── Rule 3: Is cert in drive's approved list? ────────────────────
+    actual_attempts = 0
+    for r in all_user_regs:
+        is_same_cert = (
+            (registration.cert_id and r.cert_id == registration.cert_id) or
+            (registration.exam_track and r.exam_track and
+             registration.exam_track.lower() == r.exam_track.lower())
+        )
+        if is_same_cert:
+            sessions = db.query(ExamSession).filter(
+                ExamSession.registration_id == r.id,
+                ExamSession.status.in_(["started", "submitted"])
+            ).count()
+            actual_attempts += sessions
+
+    attempts_ok = actual_attempts < 2
+
+    # ── Rule 3: Cert in drive list ───────────────────────────────────
     cert_in_drive_list = False
     if registration.cert_id:
         drive_cert = db.query(DriveCertification).filter(
@@ -39,45 +61,39 @@ async def evaluate_eligibility(
     criteria = {
         "tenure_days": tenure_days,
         "tenure_ok": tenure_ok,
-        "prior_attempts": registration.prior_attempts,
+        "actual_attempts": actual_attempts,
         "attempts_ok": attempts_ok,
         "cert_in_drive_list": cert_in_drive_list,
         "is_custom_cert": is_custom_cert,
         "rules_passed": rules_passed
     }
 
-    # ── If custom cert → always goes to approver ────────────────────
+    # Custom cert → always pending approval
     if is_custom_cert:
         return {
             "decision": "pending_approval",
             "ai_score": 0.5,
             "reasons": [
                 "Custom certification requires manual approver review",
-                f"Certification '{registration.custom_cert_name}' is not in the drive's approved list",
+                f"Certification '{registration.custom_cert_name}' not in approved list",
                 "Approver will verify certification eligibility"
             ],
             "criteria": criteria
         }
 
-    # ── Get AI score ─────────────────────────────────────────────────
+    # Get AI score
     ai_result = await get_ai_eligibility_score(
         tenure_days=tenure_days,
-        prior_attempts=registration.prior_attempts,
+        prior_attempts=actual_attempts,
         exam_track=registration.exam_track or "General",
         rules_passed=rules_passed
     )
 
-    # ── Decision logic ───────────────────────────────────────────────
-    # Custom cert → always pending_approval (handled above)
-    # Rules failed → ineligible
-    # Cert in drive list + rules passed + AI ≥ 0.5 → auto-approved
-    # Cert in drive list + rules passed + AI < 0.5 → pending_approval
+    # Decision
     if not rules_passed:
         decision = "ineligible"
     elif cert_in_drive_list and ai_result["score"] >= 0.5:
-        decision = "eligible"  # auto-approved, no human needed
-    elif cert_in_drive_list and ai_result["score"] < 0.5:
-        decision = "pending_approval"
+        decision = "eligible"
     else:
         decision = "pending_approval"
 

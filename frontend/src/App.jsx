@@ -13,6 +13,46 @@ import Vouchers from "./pages/Vouchers";
 import AuditLog from "./pages/AuditLog";
 import Redeem from "./pages/Redeem";
 import Welcome from "./pages/Welcome";
+import AuthCallback from "./pages/AuthCallback"; 
+import { useEffect } from "react";
+import { useMsal } from "@azure/msal-react";
+import { useAuth } from "./context/AuthContext";
+import { verifyMicrosoftToken } from "./api/microsoftAuth";
+import { useNavigate } from "react-router-dom";
+
+function MsalRedirectHandler() {
+  const { instance } = useMsal();
+  const { loginWithToken } = useAuth();
+  const navigate = useNavigate();
+
+  useEffect(() => {
+    instance.handleRedirectPromise()
+      .then(async (result) => {
+        if (result && result.accessToken) {
+          console.log("[MS-AUTH] Redirect handled:", result);
+          try {
+            const data = await verifyMicrosoftToken(result.accessToken);
+            loginWithToken(data);
+            navigate("/dashboard");
+          } catch (err) {
+            console.error("[MS-AUTH] Token verify failed:", err);
+            navigate("/login");
+          }
+        }
+        if (
+      !window.location.href.includes("code=") &&
+      !window.location.href.includes("error=")
+    ) {
+      return;
+    }
+      })
+      .catch(err => {
+        console.error("[MS-AUTH] Redirect error:", err);
+      });
+  }, []);
+
+  return null;
+}
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -25,6 +65,8 @@ const queryClient = new QueryClient({
 
 function AppRoutes() {
   return (
+    <>
+      <MsalRedirectHandler />
     <Routes>
       {/* Public */}
       <Route path="/login" element={<Login />} />
@@ -106,7 +148,9 @@ function AppRoutes() {
       <Route path="/" element={<Welcome />} />
       <Route path="/welcome" element={<Welcome />} />
       <Route path="*" element={<Navigate to="/" replace />} />
+      <Route path="/auth/callback" element={<AuthCallback />} />
     </Routes>
+    </>
   );
 }
 
