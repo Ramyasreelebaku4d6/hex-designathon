@@ -21,18 +21,38 @@ export const updateDrive = async (id, data) => {
 };
 
 export const updateDriveStatus = async (id, status) => {
-  const res = await client.patch(`/api/drives/${id}/status?status=${status}`);
+  const res = await client.patch(
+    `/api/drives/${id}/status?status=${status}`
+  );
   return res.data;
 };
 
-export const generateDriveVouchers = async (driveId) => {
-  const res = await client.post(`/api/drives/${driveId}/generate-vouchers`);
+export const getCertVoucherStatus = async (driveId) => {
+  const res = await client.get(
+    `/api/drives/${driveId}/cert-voucher-status`
+  );
   return res.data;
 };
 
-export const addMoreVouchers = async (driveId, additionalBudget) => {
+export const addVouchersForCert = async (driveId, certId, vouchers) => {
   const res = await client.post(
-    `/api/drives/${driveId}/add-vouchers?additional_budget=${additionalBudget}`
+    `/api/drives/${driveId}/certifications/${certId}/vouchers`,
+    { cert_id: certId, vouchers }
+  );
+  return res.data;
+};
+
+export const removeCertFromDrive = async (driveId, certId) => {
+  const res = await client.delete(
+    `/api/drives/${driveId}/certifications/${certId}`
+  );
+  return res.data;
+};
+
+export const addDriveBudget = async (driveId, amount) => {
+  const res = await client.post(
+    `/api/drives/${driveId}/budget/add`,
+    { amount }
   );
   return res.data;
 };

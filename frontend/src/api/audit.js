@@ -20,3 +20,11 @@ export const draftEmail = async (registrationId, context) => {
   });
   return res.data;
 };
+
+export const getDriveAuditLogs = async (fromDate, toDate) => {
+  const params = new URLSearchParams();
+  if (fromDate) params.append("from_date", fromDate);
+  if (toDate) params.append("to_date", toDate);
+  const res = await client.get(`/api/audit/drive-logs?${params.toString()}`);
+  return res.data;
+};

@@ -44,7 +44,6 @@ class DriveCreate(BaseModel):
     start_date: Optional[datetime] = None
     end_date: Optional[datetime] = None
     policy_url: Optional[str] = None
-    pass_threshold: Optional[float] = 70.0  
 
 class DriveResponse(BaseModel):
     id: str
@@ -54,7 +53,6 @@ class DriveResponse(BaseModel):
     start_date: Optional[datetime]
     end_date: Optional[datetime]
     status: str
-    pass_threshold: float  # ← add this
     created_at: datetime
     class Config:
         from_attributes = True
@@ -89,6 +87,7 @@ class EligibilityResponse(BaseModel):
 class ApprovalRequest(BaseModel):
     decision: str  # "eligible" or "ineligible"
     reason: Optional[str] = None
+    cert_id: Optional[str] = None
 
 # --- Results ---
 class ResultCreate(BaseModel):

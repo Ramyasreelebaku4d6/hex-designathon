@@ -14,3 +14,8 @@ export const getRegistrationStatus = async (id) => {
   const res = await client.get(`/api/registrations/${id}/status`);
   return res.data;
 };
+
+export const getRegistrationsByDrive = async () => {
+  const res = await client.get("/api/registrations/by-drive");
+  return res.data;
+};

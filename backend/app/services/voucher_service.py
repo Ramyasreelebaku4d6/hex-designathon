@@ -88,11 +88,37 @@ async def auto_allocate_voucher(
 
 
 def _notify_no_voucher(registration_id: str, drive_id: str, db: Session):
-    """Notify admins when voucher pool is exhausted."""
-    from app.models import Drive
+    """Email all admins when the voucher pool for a drive is exhausted."""
+    from app.models import Drive, User
+    from app.services.email_service import send_email, wrap_html
+
     drive = db.query(Drive).filter(Drive.id == drive_id).first()
     drive_name = drive.name if drive else drive_id
-    print(
-        f"[VOUCHER] ALERT — Pool exhausted for drive '{drive_name}'. "
-        f"Registration {registration_id} has no voucher."
-    )
+
+    print(f"[VOUCHER] ALERT — Pool exhausted for drive '{drive_name}'. Reg {registration_id} has no voucher.")
+
+    admins = db.query(User).filter(User.role == "admin").all()
+    subject = f"⚠️ Voucher Pool Exhausted — {drive_name}"
+    body = wrap_html(f"""
+        <h2 style="color:#111827;margin:0 0 16px;">Voucher Pool Exhausted</h2>
+        <p style="color:#374151;line-height:1.6;">
+            The voucher pool for <strong>{drive_name}</strong> has run out.
+            A candidate who just completed their course could not receive a voucher.
+        </p>
+        <div style="background:#fef2f2;border:1px solid #dc2626;border-radius:8px;
+                    padding:16px;margin:20px 0;">
+            <p style="margin:0;color:#dc2626;font-weight:600;">Action Required</p>
+            <p style="margin:8px 0 0;color:#374151;font-size:13px;">
+                Please add more vouchers to <strong>{drive_name}</strong>
+                so pending registrations can be fulfilled.
+            </p>
+        </div>
+        <p style="color:#6b7280;font-size:12px;">Registration ID: {registration_id}</p>
+        <br/>
+        <p style="color:#374151;">L&amp;D Mavericks Team<br/>Hexaware Technologies</p>
+    """)
+    for admin in admins:
+        try:
+            send_email(admin.email, subject, body)
+        except Exception as e:
+            print(f"[VOUCHER] Failed to notify admin {admin.email}: {e}")

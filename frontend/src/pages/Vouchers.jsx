@@ -1,13 +1,13 @@
 import { useState } from "react";
-import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { getVoucherStats } from "../api/dashboard";
-import { addMoreVouchers } from "../api/drives";
+import { addDriveBudget, getCertVoucherStatus, addVouchersForCert } from "../api/drives";
 import { useAuth } from "../context/AuthContext";
 import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid,
   Tooltip, ResponsiveContainer, Cell, PieChart, Pie, Legend
 } from "recharts";
-import { ChevronDown, ChevronUp, Plus, X } from "lucide-react";
+import { ChevronDown, ChevronUp, Plus, X, AlertTriangle, DollarSign } from "lucide-react";
 
 const STATUS_COLORS = {
   unassigned: "#94A3B8",
@@ -45,114 +45,295 @@ function VoucherPieChart({ data }) {
   );
 }
 
-function AddVouchersModal({ drive, onClose, onSuccess }) {
-  const [budget, setBudget] = useState("");
-  const [loading, setLoading] = useState(false);
-  const [result, setResult] = useState(null);
-  const [error, setError] = useState("");
+// ── Voucher entry row ─────────────────────────────────────────────────
+function VoucherRow({ index, voucher, onChange, onRemove, isDuplicate, driveStartDate }) {
+  const expiryInvalid = voucher.expiry_date && driveStartDate &&
+    new Date(voucher.expiry_date) <= new Date(driveStartDate);
 
-  const handleAdd = async () => {
-    if (!budget || parseFloat(budget) <= 0) {
-      setError("Enter a valid budget amount");
+  return (
+    <div className={`grid grid-cols-12 gap-2 items-center p-2 rounded-lg border ${
+      isDuplicate ? "border-red-300 bg-red-50" :
+      expiryInvalid ? "border-amber-300 bg-amber-50" :
+      "border-gray-200 bg-gray-50"
+    }`}>
+      <div className="col-span-5">
+        <input
+          className={`input text-xs ${isDuplicate ? "border-red-400" : ""}`}
+          placeholder="Voucher code e.g. AZ-XXXX-YYYY"
+          value={voucher.code}
+          onChange={e => onChange(index, "code", e.target.value.toUpperCase())}
+        />
+        {isDuplicate && (
+          <p className="text-red-500 text-xs mt-0.5">Duplicate code</p>
+        )}
+      </div>
+      <div className="col-span-3">
+        <input
+          className="input text-xs"
+          type="number"
+          placeholder="₹ Amount"
+          value={voucher.cost}
+          onChange={e => onChange(index, "cost", e.target.value)}
+        />
+      </div>
+      <div className="col-span-3">
+        <input
+          className={`input text-xs ${expiryInvalid ? "border-amber-400" : ""}`}
+          type="date"
+          value={voucher.expiry_date}
+          onChange={e => onChange(index, "expiry_date", e.target.value)}
+        />
+        {expiryInvalid && (
+          <p className="text-amber-600 text-xs mt-0.5">Must be after start date</p>
+        )}
+      </div>
+      <div className="col-span-1 flex justify-center">
+        <button
+          type="button"
+          onClick={() => onRemove(index)}
+          className="text-red-400 hover:text-red-600"
+        >
+          <X size={14} />
+        </button>
+      </div>
+    </div>
+  );
+}
+
+// ── Voucher manager per certification ─────────────────────────────────
+function CertVoucherManager({ driveId, certId, certName, driveStartDate, budget, onVouchersAdded }) {
+  const [vouchers, setVouchers] = useState([{ code: "", cost: "", expiry_date: "" }]);
+  const [loading, setLoading] = useState(false);
+  const [errors, setErrors] = useState([]);
+  const [warnings, setWarnings] = useState([]);
+  const [showAddBudget, setShowAddBudget] = useState(false);
+  const [extraBudget, setExtraBudget] = useState("");
+  const qc = useQueryClient();
+
+  const codes = vouchers.map(v => v.code.trim().toUpperCase()).filter(Boolean);
+  const duplicateCodes = codes.filter((code, idx) => codes.indexOf(code) !== idx);
+
+  const addRow = () => setVouchers(prev => [...prev, { code: "", cost: "", expiry_date: "" }]);
+  const removeRow = (idx) => setVouchers(prev => prev.filter((_, i) => i !== idx));
+  const updateRow = (idx, field, value) =>
+    setVouchers(prev => prev.map((v, i) => i === idx ? { ...v, [field]: value } : v));
+
+  const totalCost = vouchers.reduce((sum, v) => sum + (parseFloat(v.cost) || 0), 0);
+  const budgetAfter = (budget || 0) - totalCost;
+
+  const handleSubmit = async () => {
+    setLoading(true);
+    setErrors([]);
+    setWarnings([]);
+    const valid = vouchers.filter(v => v.code.trim() && v.cost && v.expiry_date);
+    if (!valid.length) {
+      setErrors([{ message: "Add at least one complete voucher" }]);
+      setLoading(false);
       return;
     }
-    setLoading(true);
-    setError("");
     try {
-      const res = await addMoreVouchers(drive.drive_id, parseFloat(budget));
-      setResult(res);
-      onSuccess();
+      const payload = valid.map(v => ({
+        code: v.code.trim().toUpperCase(),
+        cost: parseFloat(v.cost),
+        expiry_date: new Date(v.expiry_date).toISOString()
+      }));
+      const result = await addVouchersForCert(driveId, certId, payload);
+      if (result.success) {
+        qc.invalidateQueries(["cert-voucher-status", driveId]);
+        onVouchersAdded();
+        if (result.warnings?.length) setWarnings(result.warnings);
+      } else {
+        setErrors(result.errors || []);
+        if (result.warnings?.length) setWarnings(result.warnings);
+      }
     } catch (e) {
-      setError(e.response?.data?.detail || "Failed to generate vouchers");
+      setErrors([{ message: e.response?.data?.detail || "Failed to add vouchers" }]);
     } finally {
       setLoading(false);
     }
   };
 
+  const handleAddBudget = async () => {
+    if (!extraBudget || parseFloat(extraBudget) <= 0) return;
+    try {
+      await addDriveBudget(driveId, parseFloat(extraBudget));
+      qc.invalidateQueries(["cert-voucher-status", driveId]);
+      setShowAddBudget(false);
+      setExtraBudget("");
+    } catch (e) {
+      console.error(e);
+    }
+  };
+
+  return (
+    <div className="border border-gray-200 rounded-xl p-4 space-y-3">
+      <div>
+        <p className="font-medium text-gray-800 text-sm">{certName}</p>
+        <p className="text-xs text-gray-500 mt-0.5">New vouchers will be added to existing ones</p>
+        <p className="text-xs text-gray-500 mt-0.5">
+          Budget remaining:{" "}
+          <span className={`font-medium ${budgetAfter < 0 ? "text-red-600" : "text-green-600"}`}>
+            ₹{(budget || 0).toLocaleString()}
+          </span>
+        </p>
+      </div>
+
+      <div className="grid grid-cols-12 gap-2 text-xs text-gray-500 font-medium px-2">
+        <div className="col-span-5">Voucher Code *</div>
+        <div className="col-span-3">Amount (₹) *</div>
+        <div className="col-span-3">Expiry Date *</div>
+        <div className="col-span-1"></div>
+      </div>
+
+      <div className="space-y-2">
+        {vouchers.map((v, idx) => (
+          <VoucherRow
+            key={idx}
+            index={idx}
+            voucher={v}
+            onChange={updateRow}
+            onRemove={removeRow}
+            isDuplicate={v.code.trim() && duplicateCodes.includes(v.code.trim().toUpperCase())}
+            driveStartDate={driveStartDate}
+          />
+        ))}
+      </div>
+
+      <button
+        type="button"
+        onClick={addRow}
+        className="flex items-center gap-1 text-xs text-blue-600 hover:text-blue-800"
+      >
+        <Plus size={12} />
+        Add another voucher
+      </button>
+
+      {totalCost > 0 && (
+        <div className={`rounded-lg px-3 py-2 text-xs ${
+          budgetAfter < 0 ? "bg-red-50 border border-red-200" : "bg-green-50 border border-green-200"
+        }`}>
+          <div className="flex justify-between">
+            <span className="text-gray-600">Total cost:</span>
+            <span className="font-medium">₹{totalCost.toLocaleString()}</span>
+          </div>
+          <div className="flex justify-between mt-1">
+            <span className="text-gray-600">Budget after:</span>
+            <span className={`font-medium ${budgetAfter < 0 ? "text-red-600" : "text-green-600"}`}>
+              ₹{budgetAfter.toLocaleString()}
+            </span>
+          </div>
+          {budgetAfter < 0 && (
+            <div className="mt-2">
+              <button
+                onClick={() => setShowAddBudget(true)}
+                className="flex items-center gap-1 text-blue-600 hover:text-blue-800"
+              >
+                <DollarSign size={11} />
+                Add budget to continue
+              </button>
+            </div>
+          )}
+        </div>
+      )}
+
+      {showAddBudget && (
+        <div className="bg-blue-50 rounded-lg p-3 flex items-center gap-2">
+          <input
+            className="input flex-1 text-sm"
+            type="number"
+            placeholder="Additional budget amount"
+            value={extraBudget}
+            onChange={e => setExtraBudget(e.target.value)}
+          />
+          <button onClick={handleAddBudget} className="btn-primary text-sm px-3 py-2">Add</button>
+          <button onClick={() => setShowAddBudget(false)} className="text-gray-400">
+            <X size={16} />
+          </button>
+        </div>
+      )}
+
+      {errors.map((e, i) => (
+        <div key={i} className="bg-red-50 border border-red-200 rounded-lg p-2 text-xs text-red-700">
+          ⚠ {e.message}
+        </div>
+      ))}
+      {warnings.map((w, i) => (
+        <div key={i} className="bg-amber-50 border border-amber-200 rounded-lg p-2 text-xs text-amber-700">
+          ⚠ {w.message}
+        </div>
+      ))}
+
+      <button
+        onClick={handleSubmit}
+        disabled={loading || duplicateCodes.length > 0 || budgetAfter < 0}
+        className="btn-primary w-full text-sm disabled:opacity-50 flex items-center justify-center gap-2"
+      >
+        {loading ? (
+          <>
+            <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white" />
+            Saving...
+          </>
+        ) : "Add More Vouchers"}
+      </button>
+    </div>
+  );
+}
+
+function AddVouchersModal({ drive, onClose, onSuccess }) {
+  const qc = useQueryClient();
+
+  const { data: certStatus, isLoading } = useQuery({
+    queryKey: ["cert-voucher-status", drive.drive_id],
+    queryFn: () => getCertVoucherStatus(drive.drive_id),
+  });
+
   return (
     <div className="fixed inset-0 bg-black bg-opacity-40 flex items-center justify-center z-50 p-4">
-      <div className="bg-white rounded-2xl shadow-xl w-full max-w-md p-6">
+      <div className="bg-white rounded-2xl shadow-xl w-full max-w-2xl p-6 max-h-[90vh] overflow-y-auto">
         <div className="flex items-center justify-between mb-4">
           <div>
-            <h2 className="text-lg font-semibold">Add More Vouchers</h2>
+            <h2 className="text-lg font-semibold">Add Vouchers</h2>
             <p className="text-xs text-gray-500 mt-0.5">{drive.drive_name}</p>
           </div>
           <button onClick={onClose}><X size={20} className="text-gray-400" /></button>
         </div>
 
-        {!result ? (
-          <div className="space-y-4">
-            <div className="bg-amber-50 rounded-lg p-3 text-xs text-amber-700">
-              All vouchers for some certifications are exhausted. Add budget to
-              generate new unique voucher codes via AI.
-            </div>
-
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">
-                Additional Budget (₹)
-              </label>
-              <input
-                className="input"
-                type="number"
-                placeholder="e.g. 10000"
-                value={budget}
-                onChange={e => setBudget(e.target.value)}
-              />
-              {budget && parseFloat(budget) > 0 && (
-                <p className="text-xs text-gray-500 mt-1">
-                  Will generate ~{Math.floor(parseFloat(budget) / 1000)} vouchers
-                  across exhausted certifications
-                </p>
-              )}
-            </div>
-
-            {error && (
-              <p className="text-xs text-red-600">{error}</p>
-            )}
-
-            <div className="flex gap-3">
-              <button
-                onClick={handleAdd}
-                disabled={loading}
-                className="btn-primary flex-1 flex items-center justify-center gap-2"
-              >
-                {loading ? (
-                  <>
-                    <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white" />
-                    Generating with AI...
-                  </>
-                ) : "Generate Vouchers"}
-              </button>
-              <button onClick={onClose} className="btn-secondary flex-1">
-                Cancel
-              </button>
-            </div>
-          </div>
+        {isLoading ? (
+          <div className="py-10 text-center text-gray-500 text-sm">Loading certifications...</div>
         ) : (
-          <div className="space-y-3">
-            <div className="bg-green-50 rounded-xl p-4 text-center">
-              <p className="text-2xl font-bold text-green-700">
-                {result.vouchers_generated}
-              </p>
-              <p className="text-sm text-green-600 mt-1">
-                new vouchers generated
-              </p>
-              <p className="text-xs text-green-500 mt-1">
-                New total budget: ₹{result.new_total_budget?.toLocaleString()}
-              </p>
+          <div className="space-y-4">
+            <div className="grid grid-cols-2 gap-3">
+              <div className="bg-gray-50 rounded-lg px-3 py-2">
+                <p className="text-xs text-gray-500">Budget remaining</p>
+                <p className="font-semibold text-green-700 text-sm">
+                  ₹{(certStatus?.budget_remaining || 0).toLocaleString()}
+                </p>
+              </div>
+              <div className="bg-gray-50 rounded-lg px-3 py-2">
+                <p className="text-xs text-gray-500">Certifications</p>
+                <p className="font-semibold text-gray-800 text-sm">
+                  {certStatus?.certifications?.length || 0} linked
+                </p>
+              </div>
             </div>
-            <div className="space-y-2">
-              {result.distribution?.map((d, i) => (
-                <div key={i} className="flex justify-between text-sm bg-gray-50 rounded-lg px-3 py-2">
-                  <span className="text-gray-700">{d.cert}</span>
-                  <span className="font-medium text-blue-600">
-                    +{d.new_vouchers} vouchers
-                  </span>
-                </div>
-              ))}
-            </div>
-            <button onClick={onClose} className="btn-primary w-full">
-              Done
+
+            {certStatus?.certifications?.map(cert => (
+              <CertVoucherManager
+                key={cert.cert_id}
+                driveId={drive.drive_id}
+                certId={cert.cert_id}
+                certName={cert.cert_name}
+                driveStartDate={drive.start_date}
+                budget={certStatus.budget_remaining}
+                onVouchersAdded={() => {
+                  qc.invalidateQueries(["voucher-stats"]);
+                  onSuccess();
+                }}
+              />
+            ))}
+
+            <button onClick={onClose} className="btn-secondary w-full">
+              Close
             </button>
           </div>
         )}
@@ -202,6 +383,16 @@ function DriveVoucherCard({ drive, onAddVouchers }) {
               <span className={statusBadge[drive.drive_status] || "badge-gray"}>
                 {drive.drive_status}
               </span>
+              {drive.drive_status === "active" &&
+                drive.certifications?.some(c => c.is_exhausted) && (
+                <span
+                  className="flex items-center gap-1 text-xs bg-amber-100 text-amber-700 border border-amber-300 px-2 py-0.5 rounded-full"
+                  title="One or more certifications have no available vouchers"
+                >
+                  <AlertTriangle size={11} />
+                  Vouchers exhausted
+                </span>
+              )}
             </div>
             {/* Dates row */}
             <div className="flex items-center gap-3 mt-1">

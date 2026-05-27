@@ -10,6 +10,11 @@ export const getDriveCertifications = async (driveId) => {
   return res.data;
 };
 
+export const getDriveCertificationsAvailable = async (driveId) => {
+  const res = await client.get(`/api/certifications/drives/${driveId}/available`);
+  return res.data;
+};
+
 export const addCertificationToDrive = async (driveId, data) => {
   const res = await client.post(`/api/certifications/drives/${driveId}`, data);
   return res.data;

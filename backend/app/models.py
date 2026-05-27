@@ -36,13 +36,14 @@ class Drive(Base):
     end_date = Column(DateTime)
     policy_url = Column(String(500))
     status = Column(String(20), default="draft")
-    pass_threshold = Column(Float, default=70.0)
     created_at = Column(DateTime, server_default=func.now())
 
     registrations = relationship("Registration", back_populates="drive")
     vouchers = relationship("Voucher", back_populates="drive")
-    certifications = relationship("DriveCertification", back_populates="drive")  # NEW
-    slots = relationship("ExamSlot", back_populates="drive")  # NEW
+    certifications = relationship(
+        "DriveCertification", back_populates="drive"
+    )
+    slots = relationship("ExamSlot", back_populates="drive")
 
 class Registration(Base):
     __tablename__ = "registrations"
@@ -153,10 +154,14 @@ class DriveCertification(Base):
     cert_id = Column(String(36), ForeignKey("certifications.id"), nullable=False)
     added_by = Column(String(36), nullable=True)
     added_at = Column(DateTime, server_default=func.now())
+    voucher_cost = Column(Float, nullable=True)
+    vouchers_added = Column(Boolean, default=False)
 
     drive = relationship("Drive", back_populates="certifications")
-    certification = relationship("Certification", back_populates="drive_certifications")
-
+    certification = relationship(
+        "Certification", back_populates="drive_certifications"
+    )
+    
 class ExamSlot(Base):
     __tablename__ = "exam_slots"
     id = Column(String(36), primary_key=True, default=gen_uuid)

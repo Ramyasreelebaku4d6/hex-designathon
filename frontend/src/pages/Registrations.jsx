@@ -1,67 +1,113 @@
 import { useState, useEffect } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { getRegistrations, createRegistration } from "../api/registrations";
+import { createRegistration, getRegistrationsByDrive } from "../api/registrations";
 import { getDrives } from "../api/drives";
-import { getDriveCertifications } from "../api/certifications";
-import { getDriveSlots, checkAlreadyApplied } from "../api/slots";
-import { Plus, X, Clock } from "lucide-react";
+import { getDriveCertificationsAvailable } from "../api/certifications";
+import { checkAlreadyApplied } from "../api/slots";
+import { FolderOpen, X, Clock, ChevronDown, ChevronUp, Users } from "lucide-react";
 import { useAuth } from "../context/AuthContext";
 import client from "../api/client";
 
-function SlotPicker({ driveId, selectedSlotId, onSelect }) {
-  const { data: slots = [] } = useQuery({
-    queryKey: ["slots", driveId],
-    queryFn: () => getDriveSlots(driveId),
-    enabled: !!driveId,
-  });
+const STATUS_STYLES = {
+  eligible:         "bg-green-100 text-green-700",
+  submitted:        "bg-blue-100 text-blue-700",
+  pending_approval: "bg-amber-100 text-amber-700",
+  ineligible:       "bg-red-100 text-red-700",
+  result_pass:      "bg-green-100 text-green-700",
+  result_fail:      "bg-red-100 text-red-700",
+};
 
-  // Group slots by date
-  const grouped = slots.reduce((acc, slot) => {
-    const date = new Date(slot.slot_datetime).toLocaleDateString("en-IN", {
-      weekday: "short", day: "numeric", month: "short"
+function DriveRegistrationCard({ drive }) {
+  const [expanded, setExpanded] = useState(false);
+
+  const driveStatusBadge = {
+    active: "bg-green-100 text-green-700",
+    draft:  "bg-gray-100 text-gray-600",
+    closed: "bg-red-100 text-red-700",
+  };
+
+  const formatDate = (d) => {
+    if (!d) return "—";
+    return new Date(d).toLocaleDateString("en-IN", {
+      day: "numeric", month: "short", year: "numeric"
     });
-    if (!acc[date]) acc[date] = [];
-    acc[date].push(slot);
-    return acc;
-  }, {});
-
-  if (!slots.length) return (
-    <p className="text-xs text-gray-400">No slots available for this drive</p>
-  );
+  };
 
   return (
-    <div className="space-y-3 max-h-64 overflow-y-auto pr-1">
-      {Object.entries(grouped).map(([date, daySlots]) => (
-        <div key={date}>
-          <p className="text-xs font-medium text-gray-500 mb-1.5">{date}</p>
-          <div className="grid grid-cols-5 gap-1.5">
-            {daySlots.map(slot => {
-              const time = new Date(slot.slot_datetime).toLocaleTimeString(
-                "en-IN", { hour: "2-digit", minute: "2-digit", hour12: true }
-              );
-              const isSelected = selectedSlotId === slot.id;
-              const isBooked = slot.is_booked;
-              return (
-                <button
-                  key={slot.id}
-                  type="button"
-                  disabled={isBooked}
-                  onClick={() => !isBooked && onSelect(slot)}
-                  className={`text-xs py-1.5 px-1 rounded-lg border transition-all text-center ${
-                    isBooked
-                      ? "bg-gray-100 text-gray-400 cursor-not-allowed border-gray-200"
-                      : isSelected
-                      ? "bg-blue-600 text-white border-blue-600"
-                      : "bg-white text-gray-700 border-gray-200 hover:border-blue-400 hover:bg-blue-50"
-                  }`}
-                >
-                  {time}
-                </button>
-              );
-            })}
+    <div className="bg-white border border-gray-200 rounded-xl overflow-hidden">
+      <div
+        className="flex items-center justify-between px-5 py-4 cursor-pointer hover:bg-gray-50"
+        onClick={() => setExpanded(v => !v)}
+      >
+        <div className="flex items-center gap-3 flex-1">
+          <div className="flex-1">
+            <div className="flex items-center gap-2 flex-wrap">
+              <p className="font-semibold text-gray-800">{drive.drive_name}</p>
+              <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${driveStatusBadge[drive.drive_status] || "bg-gray-100 text-gray-600"}`}>
+                {drive.drive_status}
+              </span>
+            </div>
+            <p className="text-xs text-gray-400 mt-0.5">
+              {formatDate(drive.start_date)} → {formatDate(drive.end_date)}
+            </p>
+          </div>
+          <div className="flex items-center gap-1.5 text-sm text-gray-500">
+            <Users size={14} />
+            <span className="font-medium text-gray-700">{drive.registration_count}</span>
+            <span className="text-gray-400">registered</span>
           </div>
         </div>
-      ))}
+        <div className="ml-3">
+          {expanded
+            ? <ChevronUp size={16} className="text-gray-400" />
+            : <ChevronDown size={16} className="text-gray-400" />}
+        </div>
+      </div>
+
+      {expanded && (
+        <div className="border-t border-gray-100">
+          {drive.registrations.length === 0 ? (
+            <p className="px-5 py-4 text-sm text-gray-400">No registrations for this drive.</p>
+          ) : (
+            <table className="w-full text-sm">
+              <thead className="bg-gray-50">
+                <tr>
+                  <th className="text-left px-5 py-2.5 text-xs font-medium text-gray-500">User</th>
+                  <th className="text-left px-4 py-2.5 text-xs font-medium text-gray-500">Certification</th>
+                  <th className="text-left px-4 py-2.5 text-xs font-medium text-gray-500">Status</th>
+                  <th className="text-left px-4 py-2.5 text-xs font-medium text-gray-500">Registered On</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-gray-50">
+                {drive.registrations.map(reg => (
+                  <tr key={reg.id} className="hover:bg-gray-50">
+                    <td className="px-5 py-3">
+                      <p className="font-medium text-gray-800 text-sm">{reg.user_name}</p>
+                      <p className="text-xs text-gray-400">{reg.user_email}</p>
+                    </td>
+                    <td className="px-4 py-3">
+                      <div className="flex items-center gap-1.5">
+                        <span className="text-gray-700">{reg.exam_track || "—"}</span>
+                        {reg.is_custom_cert && (
+                          <span className="text-xs bg-amber-100 text-amber-700 px-1.5 py-0.5 rounded">custom</span>
+                        )}
+                      </div>
+                    </td>
+                    <td className="px-4 py-3">
+                      <span className={`text-xs px-2 py-1 rounded-full font-medium ${STATUS_STYLES[reg.status] || "bg-gray-100 text-gray-600"}`}>
+                        {reg.status}
+                      </span>
+                    </td>
+                    <td className="px-4 py-3 text-xs text-gray-500">
+                      {formatDate(reg.created_at)}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+        </div>
+      )}
     </div>
   );
 }
@@ -75,12 +121,14 @@ export default function Registrations() {
   const [selectedCert, setSelectedCert] = useState(null);
   const [customCert, setCustomCert] = useState("");
   const [isOthers, setIsOthers] = useState(false);
-  const [selectedSlot, setSelectedSlot] = useState(null);
   const [alreadyApplied, setAlreadyApplied] = useState({});
 
-  const { data: registrations = [], isLoading } = useQuery({
-    queryKey: ["registrations"],
-    queryFn: getRegistrations,
+  const isGroupedRole = ["admin", "approver", "coordinator"].includes(user?.role);
+
+  const { data: driveGroups = [], isLoading: isLoadingGroups } = useQuery({
+    queryKey: ["registrations-by-drive"],
+    queryFn: getRegistrationsByDrive,
+    enabled: isGroupedRole,
   });
 
   const { data: drives = [] } = useQuery({
@@ -111,9 +159,8 @@ export default function Registrations() {
     setSelectedCert(null);
     setIsOthers(false);
     setCustomCert("");
-    setSelectedSlot(null);
     if (drive) {
-      const driveCerts = await getDriveCertifications(drive.id);
+      const driveCerts = await getDriveCertificationsAvailable(drive.id);
       setCerts(driveCerts);
     }
   };
@@ -132,7 +179,6 @@ export default function Registrations() {
     setSelectedCert(null);
     setIsOthers(false);
     setCustomCert("");
-    setSelectedSlot(null);
   },
 });
 
@@ -146,101 +192,41 @@ export default function Registrations() {
       custom_cert_name: isOthers ? customCert : null,
       is_custom_cert: isOthers,
       exam_track: isOthers ? customCert : selectedCert?.name || null,
-      slot_id: selectedSlot?.id || null,
-      slot_datetime: selectedSlot?.slot_datetime || null,
     });
   };
-
-  // Helper for slot color coding
-  function getSlotColor(slotDatetime, status) {
-    // Completed or rejected → grey
-    const greyStatuses = [
-      "ineligible", "result_fail", "closed", "cancelled"
-    ];
-    if (greyStatuses.includes(status)) {
-      return {
-        bg: "bg-gray-100",
-        text: "text-gray-400",
-        border: "border-gray-200",
-        label: "completed"
-      };
-    }
-
-    if (!slotDatetime) return null;
-
-    const now = new Date();
-    const slot = new Date(slotDatetime);
-    const diffMs = slot - now;
-    const diffDays = diffMs / (1000 * 60 * 60 * 24);
-
-    if (diffDays < 0) {
-      // Past slot
-      return {
-        bg: "bg-gray-100",
-        text: "text-gray-400",
-        border: "border-gray-200",
-        label: "elapsed"
-      };
-    } else if (diffDays < 1) {
-      // Less than 1 day — RED urgent
-      return {
-        bg: "bg-red-50",
-        text: "text-red-700",
-        border: "border-red-200",
-        label: "today"
-      };
-    } else if (diffDays <= 2) {
-      // Between 1 and 2 days — AMBER warning
-      return {
-        bg: "bg-amber-50",
-        text: "text-amber-700",
-        border: "border-amber-200",
-        label: "tomorrow"
-      };
-    } else {
-      // More than 2 days — GREEN safe
-      return {
-        bg: "bg-green-50",
-        text: "text-green-700",
-        border: "border-green-200",
-        label: "upcoming"
-      };
-    }
-  }
 
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-2xl font-bold text-gray-800">Registrations</h1>
+          <h1 className="text-2xl font-bold text-gray-800">
+            {user?.role === "candidate" ? "Open Drives" : "Registrations"}
+          </h1>
           <p className="text-gray-500 text-sm mt-1">
-            {user?.role === "candidate" ? "Your registrations" : "All registrations"}
+            {user?.role === "candidate"
+              ? "Active certification drives you can apply to"
+              : "All registrations"}
           </p>
         </div>
-        {user?.role === "candidate" && (
-          <button
-            onClick={() => setShowForm(true)}
-            className="btn-primary flex items-center gap-2"
-          >
-            <Plus size={16} />
-            Register
-          </button>
-        )}
       </div>
 
-      {/* Available drives for candidate */}
-      {user?.role === "candidate" && activeDrives.length > 0 && (
-        <div className="space-y-2">
-          <h2 className="text-sm font-semibold text-gray-600">Open drives</h2>
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-            {activeDrives.map(drive => (
+      {/* Candidate: open drives list */}
+      {user?.role === "candidate" && (
+        <div className="space-y-3">
+          {activeDrives.length === 0 ? (
+            <div className="card p-10 text-center text-gray-500">
+              <FolderOpen size={40} className="text-gray-300 mx-auto mb-3" />
+              <p className="text-sm">No active drives at the moment. Check back soon.</p>
+            </div>
+          ) : (
+            activeDrives.map(drive => (
               <div key={drive.id} className="card flex items-center justify-between">
                 <div>
-                  <p className="text-sm font-medium text-gray-800">{drive.name}</p>
+                  <p className="text-sm font-semibold text-gray-800">{drive.name}</p>
                   <p className="text-xs text-gray-400 mt-0.5">
                     {drive.end_date
-                      ? `Closes ${new Date(drive.end_date).toLocaleDateString()}`
-                      : ""}
+                      ? `Closes ${new Date(drive.end_date).toLocaleDateString("en-IN", { day: "numeric", month: "short", year: "numeric" })}`
+                      : "No closing date"}
                   </p>
                 </div>
                 {alreadyApplied[drive.id] ? (
@@ -248,7 +234,6 @@ export default function Registrations() {
                 ) : (
                   <button
                     onClick={() => {
-                      setSelectedDrive(drive);
                       handleDriveSelect(drive);
                       setShowForm(true);
                     }}
@@ -258,8 +243,8 @@ export default function Registrations() {
                   </button>
                 )}
               </div>
-            ))}
-          </div>
+            ))
+          )}
         </div>
       )}
 
@@ -320,6 +305,11 @@ export default function Registrations() {
                   <label className="block text-sm font-medium text-gray-700 mb-1">
                     Select Certification *
                   </label>
+                  {certs.length === 0 ? (
+                    <div className="bg-amber-50 border border-amber-200 rounded-lg px-3 py-2.5 text-xs text-amber-700">
+                      No certifications with available vouchers for this drive. Please contact your admin.
+                    </div>
+                  ) : (
                   <select
                     className="input"
                     value={isOthers ? "others" : selectedCert?.id || ""}
@@ -343,6 +333,7 @@ export default function Registrations() {
                     ))}
                     <option value="others">Others (specify below)</option>
                   </select>
+                  )}
 
                   {/* Others text box */}
                   {isOthers && (
@@ -363,30 +354,6 @@ export default function Registrations() {
                 </div>
               )}
 
-              {/* Slot picker */}
-              {selectedDrive && (selectedCert || (isOthers && customCert)) && (
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-2">
-                    Select Exam Slot *
-                  </label>
-                  <SlotPicker
-                    driveId={selectedDrive.id}
-                    selectedSlotId={selectedSlot?.id}
-                    onSelect={setSelectedSlot}
-                  />
-                  {selectedSlot && (
-                    <div className="mt-2 bg-green-50 rounded-lg px-3 py-2">
-                      <p className="text-xs text-green-700 font-medium">
-                        Selected: {new Date(selectedSlot.slot_datetime).toLocaleString("en-IN", {
-                          weekday: "short", day: "numeric", month: "short",
-                          hour: "2-digit", minute: "2-digit"
-                        })}
-                      </p>
-                    </div>
-                  )}
-                </div>
-              )}
-
               {createMutation.isError && (
                 <div className="bg-red-50 text-red-600 text-sm p-3 rounded-lg">
                   {createMutation.error?.response?.data?.detail || "Registration failed"}
@@ -400,8 +367,7 @@ export default function Registrations() {
                     createMutation.isPending ||
                     !selectedDrive ||
                     (!selectedCert && !isOthers) ||
-                    (isOthers && !customCert) ||
-                    !selectedSlot
+                    (isOthers && !customCert)
                   }
                   className="btn-primary flex-1 disabled:opacity-50"
                 >
@@ -420,145 +386,21 @@ export default function Registrations() {
         </div>
       )}
 
-      {/* Registrations table */}
-      <div className="card p-0 overflow-hidden">
-        {isLoading ? (
-          <div className="p-8 text-center text-gray-500">Loading...</div>
-        ) : registrations.length === 0 ? (
-          <div className="p-8 text-center text-gray-500">No registrations found.</div>
-        ) : (
-          <table className="w-full text-sm">
-            <thead className="bg-gray-50 border-b border-gray-200">
-              <tr>
-                <th className="text-left px-4 py-3 font-medium text-gray-600 text-sm">
-                  Certification
-                </th>
-                <th className="text-left px-4 py-3 font-medium text-gray-600 text-sm">
-                  Exam Slot
-                </th>
-                <th className="text-left px-4 py-3 font-medium text-gray-600 text-sm">
-                  Status
-                </th>
-                <th className="text-left px-4 py-3 font-medium text-gray-600 text-sm text-center">
-                  Attempts
-                </th>
-                <th className="text-left px-4 py-3 font-medium text-gray-600 text-sm">
-                  Registered On
-                </th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-gray-100">
-              {registrations.map(reg => {
-                const slotColor = getSlotColor(reg.slot_datetime, reg.status);
-                const isCompleted = [
-                  "ineligible", "result_fail", "closed", "cancelled"
-                ].includes(reg.status);
+      {/* Admin/Approver/Coordinator: grouped by drive */}
+      {isGroupedRole && (
+        <div className="space-y-3">
+          {isLoadingGroups ? (
+            <div className="card p-8 text-center text-gray-500">Loading registrations...</div>
+          ) : driveGroups.length === 0 ? (
+            <div className="card p-8 text-center text-gray-500">No drives found.</div>
+          ) : (
+            driveGroups.map(drive => (
+              <DriveRegistrationCard key={drive.drive_id} drive={drive} />
+            ))
+          )}
+        </div>
+      )}
 
-                return (
-                  <tr
-                    key={reg.id}
-                    className={`hover:bg-gray-50 ${isCompleted ? "opacity-60" : ""}`}
-                  >
-                    {/* Certification */}
-                    <td className="px-4 py-3">
-                      <div className="flex items-center gap-2">
-                        <span className={`font-medium ${isCompleted ? "text-gray-400" : "text-gray-800"}`}>
-                          {reg.exam_track || "—"}
-                        </span>
-                        {reg.is_custom_cert && (
-                          <span className="text-xs bg-amber-100 text-amber-700 px-1.5 py-0.5 rounded">
-                            custom
-                          </span>
-                        )}
-                      </div>
-                    </td>
-
-                    {/* Slot timing with color */}
-                    <td className="px-4 py-3">
-                      {reg.slot_datetime ? (
-                        <div className={`inline-flex flex-col gap-0.5 px-2.5 py-1.5 rounded-lg border ${
-                          slotColor
-                            ? `${slotColor.bg} ${slotColor.border}`
-                            : "bg-gray-50 border-gray-200"
-                        }`}>
-                          <span className={`text-xs font-medium ${
-                            slotColor ? slotColor.text : "text-gray-500"
-                          }`}>
-                            {new Date(reg.slot_datetime).toLocaleDateString("en-IN", {
-                              day: "numeric",
-                              month: "short",
-                              year: "numeric"
-                            })}
-                          </span>
-                          <span className={`text-xs ${
-                            slotColor ? slotColor.text : "text-gray-400"
-                          }`}>
-                            {new Date(reg.slot_datetime).toLocaleTimeString("en-IN", {
-                              hour: "2-digit",
-                              minute: "2-digit",
-                              hour12: true
-                            })}
-                            {slotColor?.label && (
-                              <span className="ml-1.5 opacity-70">
-                                · {slotColor.label}
-                              </span>
-                            )}
-                          </span>
-                        </div>
-                      ) : (
-                        <span className="text-gray-400 text-xs">—</span>
-                      )}
-                    </td>
-
-                    {/* Status */}
-                    <td className="px-4 py-3">
-                      <span className={`text-xs px-2 py-1 rounded-full font-medium ${
-                        isCompleted
-                          ? "bg-gray-100 text-gray-400"
-                          : reg.status === "eligible"
-                          ? "bg-green-100 text-green-700"
-                          : reg.status === "submitted"
-                          ? "bg-blue-100 text-blue-700"
-                          : reg.status === "pending_approval"
-                          ? "bg-amber-100 text-amber-700"
-                          : reg.status?.includes("pass")
-                          ? "bg-green-100 text-green-700"
-                          : reg.status?.includes("fail")
-                          ? "bg-red-100 text-red-700"
-                          : "bg-gray-100 text-gray-600"
-                      }`}>
-                        {reg.status}
-                      </span>
-                    </td>
-
-                    {/* Prior attempts */}
-                    <td className="px-4 py-3 text-center">
-                      <span className={`text-sm font-medium ${
-                        isCompleted ? "text-gray-400" : "text-gray-700"
-                      }`}>
-                        {reg.prior_attempts ?? 0}
-                      </span>
-                    </td>
-
-                    {/* Registered date */}
-                    <td className="px-4 py-3">
-                      <span className={`text-xs ${
-                        isCompleted ? "text-gray-400" : "text-gray-500"
-                      }`}>
-                        {new Date(reg.created_at).toLocaleDateString("en-IN", {
-                          day: "numeric",
-                          month: "short",
-                          year: "numeric"
-                        })}
-                      </span>
-                    </td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
-        )}
-      </div>
     </div>
   );
 }

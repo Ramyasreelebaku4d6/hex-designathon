@@ -2,7 +2,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 from typing import List, Optional
 from app.database import get_db
-from app.models import Certification, DriveCertification, Drive
+from app.models import Certification, DriveCertification, Drive, Voucher
 from app.schemas import CertificationResponse, DriveCertificationAdd
 from app.auth import get_current_user, require_role
 import uuid
@@ -47,6 +47,41 @@ def create_certification(
     db.commit()
     db.refresh(cert)
     return cert
+
+@router.get("/drives/{drive_id}/available")
+def get_available_drive_certifications(
+    drive_id: str,
+    db: Session = Depends(get_db),
+    current_user=Depends(get_current_user)
+):
+    """Returns only certifications that have at least one unassigned voucher for this drive."""
+    from sqlalchemy import func
+
+    # Single query: count unassigned vouchers grouped by cert_id
+    available_counts = dict(
+        db.query(Voucher.cert_id, func.count(Voucher.id))
+        .filter(Voucher.drive_id == drive_id, Voucher.status == "unassigned")
+        .group_by(Voucher.cert_id)
+        .all()
+    )
+
+    drive_certs = (
+        db.query(DriveCertification)
+        .filter(DriveCertification.drive_id == drive_id)
+        .all()
+    )
+
+    return [
+        {
+            "id": dc.certification.id,
+            "name": dc.certification.name,
+            "code": dc.certification.code,
+            "is_custom": dc.certification.is_custom,
+        }
+        for dc in drive_certs
+        if dc.certification and available_counts.get(dc.cert_id, 0) > 0
+    ]
+
 
 @router.get("/drives/{drive_id}", response_model=List[CertificationResponse])
 def get_drive_certifications(

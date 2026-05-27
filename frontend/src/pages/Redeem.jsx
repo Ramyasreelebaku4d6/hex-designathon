@@ -1,20 +1,27 @@
 import { useEffect, useState, useRef  } from "react";
-import { useParams } from "react-router-dom";
+import { useParams, useNavigate } from "react-router-dom";
+import { useQueryClient } from "@tanstack/react-query";
 import { redeemVoucher } from "../api/vouchers";
 import { CheckCircle, XCircle } from "lucide-react";
 
 export default function Redeem() {
   const { token } = useParams();
+  const navigate = useNavigate();
+  const qc = useQueryClient();
   const [result, setResult] = useState(null);
   const [error, setError] = useState(null);
   const [loading, setLoading] = useState(true);
   const hasCalled = useRef(false);
 
   useEffect(() => {
-    if (hasCalled.current) return; // ← skip if already called
+    if (hasCalled.current) return;
     hasCalled.current = true;
     redeemVoucher(token)
-      .then((data) => setResult(data))
+      .then((data) => {
+        setResult(data);
+        // Invalidate dashboard cache so status shows as redeemed immediately on return
+        qc.invalidateQueries({ queryKey: ["candidate-dashboard"] });
+      })
       .catch((err) =>
         setError(
           err.response?.data?.detail || "Invalid or expired voucher link."
@@ -74,6 +81,12 @@ export default function Redeem() {
               className="btn-primary w-full mt-4"
             >
               Copy Code
+            </button>
+            <button
+              onClick={() => navigate("/dashboard")}
+              className="btn-secondary w-full mt-2"
+            >
+              Go to Dashboard
             </button>
           </>
         )}

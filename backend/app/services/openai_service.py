@@ -1,9 +1,10 @@
 from openai import AzureOpenAI
 from app.core.config import settings
 from sqlalchemy.orm import Session
+import asyncio
 import json
 
-# Initialize Azure OpenAI client pointing to Foundry endpoint
+# Synchronous client — only used via asyncio.to_thread to avoid blocking the event loop
 client = AzureOpenAI(
     azure_endpoint=settings.MODEL_ENDPOINT,
     api_key=settings.MODEL_SUBSCRIPTION_KEY,
@@ -45,34 +46,30 @@ Example:
   ]
 }}
 """
-    try:
+    def _sync_call():
         response = client.chat.completions.create(
             model=settings.MODEL_DEPLOYMENT,
             messages=[
-                {
-                    "role": "system",
-                    "content": "You are an eligibility scoring assistant. Always respond with valid JSON only."
-                },
-                {
-                    "role": "user",
-                    "content": prompt
-                }
+                {"role": "system", "content": "You are an eligibility scoring assistant. Always respond with valid JSON only."},
+                {"role": "user", "content": prompt},
             ],
             temperature=0.3,
-            max_completion_tokens=300
+            max_completion_tokens=300,
         )
         raw = response.choices[0].message.content.strip()
         result = json.loads(raw)
         return {
             "score": float(result.get("score", 0.5)),
-            "reasons": result.get("reasons", [])
+            "reasons": result.get("reasons", []),
         }
+
+    try:
+        return await asyncio.to_thread(_sync_call)
     except Exception as e:
         print(f"AI scoring failed: {e}")
-        # Fallback to rule-based score
         return {
             "score": 0.8 if rules_passed else 0.2,
-            "reasons": ["AI scoring unavailable — using rule-based fallback"]
+            "reasons": ["AI scoring unavailable — using rule-based fallback"],
         }
 
 
