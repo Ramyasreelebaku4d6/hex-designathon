@@ -14,38 +14,67 @@ ai_client = AzureOpenAI(
 )
 
 # ── Base email sender ─────────────────────────────────────────────────
-def send_email(to_email: str, subject: str, body: str):
+def send_email(to_email: str, subject: str, body: str) -> bool:
+    """Send via SendGrid. Falls back to SMTP (Office365) if SendGrid fails."""
+    if _send_via_sendgrid(to_email, subject, body):
+        return True
+    print(f"[EMAIL] SendGrid failed — trying SMTP fallback for {to_email}")
+    return _send_via_smtp(to_email, subject, body)
+
+
+def _send_via_sendgrid(to_email: str, subject: str, body: str) -> bool:
     try:
+        if not settings.SENDGRID_API_KEY:
+            return False
         import sendgrid
         from sendgrid.helpers.mail import Mail, Email, To, Content
 
-        sg = sendgrid.SendGridAPIClient(
-            api_key=settings.SENDGRID_API_KEY
-        )
+        sg = sendgrid.SendGridAPIClient(api_key=settings.SENDGRID_API_KEY)
         message = Mail(
-            from_email=Email(
-                settings.SMTP_USER,
-                "Maverick Certification Hub"
-            ),
+            from_email=Email(settings.SMTP_USER, "Maverick Certification Hub"),
             to_emails=To(to_email),
             subject=subject,
             html_content=Content("text/html", body)
         )
         response = sg.send(message)
         if response.status_code in [200, 201, 202]:
-            print(f"[EMAIL] ✅ Sent to {to_email} — {subject}")
+            print(f"[EMAIL] ✅ SendGrid → {to_email} — {subject}")
             return True
-        else:
-            print(f"[EMAIL] ❌ SendGrid error: {response.status_code} {response.body}")
-            return False
+        print(f"[EMAIL] ❌ SendGrid {response.status_code}: {response.body}")
+        return False
     except Exception as e:
-        print(f"[EMAIL] ❌ Failed: {e}")
+        print(f"[EMAIL] ❌ SendGrid exception: {e}")
+        return False
+
+
+def _send_via_smtp(to_email: str, subject: str, body: str) -> bool:
+    try:
+        if not settings.SMTP_USER or not settings.SMTP_PASSWORD:
+            print("[EMAIL] ❌ SMTP credentials not configured")
+            return False
+        msg = MIMEMultipart("alternative")
+        msg["Subject"] = subject
+        msg["From"]    = f"Maverick Certification Hub <{settings.SMTP_USER}>"
+        msg["To"]      = to_email
+        msg.attach(MIMEText(body, "html"))
+
+        with smtplib.SMTP(settings.SMTP_HOST, settings.SMTP_PORT) as server:
+            server.ehlo()
+            server.starttls()
+            server.login(settings.SMTP_USER, settings.SMTP_PASSWORD)
+            server.sendmail(settings.SMTP_USER, to_email, msg.as_string())
+
+        print(f"[EMAIL] ✅ SMTP → {to_email} — {subject}")
+        return True
+    except Exception as e:
+        print(f"[EMAIL] ❌ SMTP exception: {e}")
         return False
 
 
 # ── AI email generator ───────────────────────────────────────────────
 def generate_ai_email(prompt: str, fallback_subject: str, fallback_body: str) -> dict:
-    """Generate personalized email using GPT. Falls back to template if AI fails."""
+    """Generate personalized email using GPT. Falls back to template if AI fails.
+    NOTE: This is a blocking call — always invoke via asyncio.to_thread in async contexts."""
     try:
         response = ai_client.chat.completions.create(
             model=settings.MODEL_DEPLOYMENT,
@@ -76,6 +105,12 @@ Do not include markdown or code blocks in response."""
             "subject": fallback_subject,
             "body": fallback_body
         }
+
+
+async def generate_ai_email_async(prompt: str, fallback_subject: str, fallback_body: str) -> dict:
+    """Non-blocking version — runs generate_ai_email in a thread pool."""
+    import asyncio
+    return await asyncio.to_thread(generate_ai_email, prompt, fallback_subject, fallback_body)
 
 
 # ── Email base HTML wrapper ───────────────────────────────────────────
@@ -172,9 +207,9 @@ Return JSON with 'subject' and 'body' (HTML with inline CSS).
         </p>
         <ol style="color: #374151; line-height: 2;">
             <li>Eligibility evaluation (AI-powered)</li>
-            <li>Course completion</li>
-            <li>Exam scheduling</li>
-            <li>Certification issuance</li>
+            <li>Complete your course</li>
+            <li>Receive &amp; redeem your exam voucher</li>
+            <li>Appear for exam externally, then upload your certificate</li>
         </ol>
         <p style="color: #374151;">You will receive email updates at each step.</p>
         <br/>
@@ -359,13 +394,59 @@ def send_reminder_email(
     to_email: str,
     name: str,
     vendor: str,
-    days_left: int,
     tokenized_link: str,
-    exam_track: str = None
+    days_left: int = None,
+    exam_track: str = None,
+    post_allocation: bool = False,
 ):
-    urgency = "CRITICAL" if days_left <= 3 else "URGENT" if days_left <= 7 else "REMINDER"
+    if post_allocation:
+        prompt = f"""
+Generate a friendly follow-up email reminding a candidate to redeem their exam voucher.
+They received the voucher 3 days ago and haven't redeemed it yet.
 
-    prompt = f"""
+Details:
+- Name: {name}
+- Vendor: {vendor}
+- Certification: {exam_track or 'Certification'}
+- Redemption link: {tokenized_link}
+
+Tone: friendly nudge, not urgent. Remind them the voucher is waiting and guide them to redeem it.
+
+Include this exact HTML button:
+<a href="{tokenized_link}" style="display:inline-block;background:#0078d4;
+color:white;padding:14px 32px;text-decoration:none;border-radius:8px;
+font-weight:600;font-size:15px;">Redeem Your Voucher</a>
+
+Return JSON with 'subject' and 'body' (HTML with inline CSS).
+"""
+        fallback_subject = "📬 Your exam voucher is waiting — redeem it now"
+        fallback_body = wrap_html(f"""
+            <h2 style="color:#111827;margin:0 0 16px;">Hi {name},</h2>
+            <p style="color:#374151;line-height:1.6;">
+                Just a quick nudge — your <strong>{vendor}</strong> exam voucher was
+                allocated to you 3 days ago and is still waiting to be redeemed.
+            </p>
+            <p style="color:#374151;line-height:1.6;">
+                Click the button below to access your voucher and complete your certification.
+            </p>
+            <div style="text-align:center;margin:28px 0;">
+                <a href="{tokenized_link}"
+                   style="display:inline-block;background:#0078d4;color:white;
+                          padding:14px 32px;text-decoration:none;border-radius:8px;
+                          font-weight:600;font-size:15px;">
+                    Redeem Your Voucher
+                </a>
+            </div>
+            <br/>
+            <p style="color:#374151;">Best regards,<br/>
+            <strong>L&D Mavericks Team</strong><br/>Hexaware Technologies</p>
+        """)
+    else:
+        urgency = "URGENT" if days_left <= 7 else "REMINDER"
+        color = "#d97706" if days_left <= 7 else "#0078d4"
+        emoji = "⚠️" if days_left <= 7 else "📢"
+
+        prompt = f"""
 Generate a voucher expiry reminder email. Urgency level: {urgency}
 
 Details:
@@ -376,53 +457,44 @@ Details:
 - Redemption link: {tokenized_link}
 
 Tone based on urgency:
-- CRITICAL (≤3 days): Very urgent, direct, action required NOW
 - URGENT (≤7 days): Strong urgency, act soon
 - REMINDER (>7 days): Friendly reminder, plan ahead
 
 Include this exact HTML button:
-<a href="{tokenized_link}" style="display:inline-block;background:#dc2626;
+<a href="{tokenized_link}" style="display:inline-block;background:{color};
 color:white;padding:14px 32px;text-decoration:none;border-radius:8px;
 font-weight:600;font-size:15px;">Redeem Now — {days_left} Days Left</a>
 
 Return JSON with 'subject' and 'body' (HTML with inline CSS).
 """
+        fallback_subject = f"{emoji} [{urgency}] Your voucher expires in {days_left} days — Act now"
+        fallback_body = wrap_html(f"""
+            <h2 style="color:#111827;margin:0 0 16px;">
+                {emoji} Hi {name},
+            </h2>
+            <div style="background:#fef2f2;border:2px solid {color};
+                        border-radius:8px;padding:20px;margin:20px 0;text-align:center;">
+                <p style="color:{color};font-size:28px;font-weight:700;margin:0;">
+                    {days_left} Days Left
+                </p>
+                <p style="color:#374151;margin:8px 0 0;">
+                    Your <strong>{vendor}</strong> voucher is expiring soon!
+                </p>
+            </div>
+            <div style="text-align:center;margin:28px 0;">
+                <a href="{tokenized_link}"
+                   style="display:inline-block;background:{color};color:white;
+                          padding:14px 32px;text-decoration:none;border-radius:8px;
+                          font-weight:600;font-size:15px;">
+                    Redeem Now — {days_left} Days Left
+                </a>
+            </div>
+            <br/>
+            <p style="color:#374151;">Best regards,<br/>
+            <strong>L&D Mavericks Team</strong><br/>Hexaware Technologies</p>
+        """)
 
-    color = "#dc2626" if days_left <= 3 else "#d97706" if days_left <= 7 else "#0078d4"
-    emoji = "🚨" if days_left <= 3 else "⚠️" if days_left <= 7 else "📢"
-
-    fallback_body = wrap_html(f"""
-        <h2 style="color: #111827; margin: 0 0 16px;">
-            {emoji} Hi {name},
-        </h2>
-        <div style="background: #fef2f2; border: 2px solid {color}; 
-                    border-radius: 8px; padding: 20px; margin: 20px 0; 
-                    text-align: center;">
-            <p style="color: {color}; font-size: 28px; font-weight: 700; margin: 0;">
-                {days_left} Days Left
-            </p>
-            <p style="color: #374151; margin: 8px 0 0;">
-                Your <strong>{vendor}</strong> voucher is expiring soon!
-            </p>
-        </div>
-        <div style="text-align: center; margin: 28px 0;">
-            <a href="{tokenized_link}"
-               style="display:inline-block;background:{color};color:white;
-                      padding:14px 32px;text-decoration:none;border-radius:8px;
-                      font-weight:600;font-size:15px;">
-                Redeem Now — {days_left} Days Left
-            </a>
-        </div>
-        <br/>
-        <p style="color: #374151;">Best regards,<br/>
-        <strong>L&D Mavericks Team</strong><br/>Hexaware Technologies</p>
-    """)
-
-    result = generate_ai_email(
-        prompt,
-        fallback_subject=f"{emoji} [{urgency}] Your voucher expires in {days_left} days — Act now",
-        fallback_body=fallback_body
-    )
+    result = generate_ai_email(prompt, fallback_subject=fallback_subject, fallback_body=fallback_body)
 
     if "<html" not in result["body"].lower():
         result["body"] = wrap_html(result["body"])

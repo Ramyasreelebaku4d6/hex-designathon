@@ -1,24 +1,64 @@
-
 from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks
 from sqlalchemy.orm import Session
-from typing import List
+from typing import List, Optional
+from datetime import datetime, timedelta
+from pydantic import BaseModel
 from app.database import get_db
-from app.models import Drive
+from app.models import (
+    Drive, User, DriveCertification,
+    Certification, Voucher, ExamSlot
+)
 from app.schemas import DriveCreate, DriveResponse
 from app.auth import get_current_user, require_role
 from app.core.audit_logger import write_audit_log
-
-# Voucher generation imports
-from app.services.voucher_generator import (
-    generate_unique_voucher_codes,
-    calculate_voucher_distribution
-)
 from app.core.security import encrypt_voucher_code, mask_voucher_code
-from app.models import Certification, DriveCertification, Voucher, ExamSlot
 import uuid
-from datetime import datetime, timedelta
 
 router = APIRouter()
+
+# ── Schemas ──────────────────────────────────────────────────────────
+
+class VoucherInput(BaseModel):
+    code: str
+    cost: float
+    expiry_date: datetime
+
+class CertVouchersInput(BaseModel):
+    cert_id: str
+    vouchers: List[VoucherInput]
+
+class AddBudgetInput(BaseModel):
+    amount: float
+
+# ── Helpers ──────────────────────────────────────────────────────────
+
+def get_drive_cert_status(drive_id: str, db: Session):
+    """Returns cert status for a drive — which have vouchers, which don't."""
+    drive_certs = db.query(DriveCertification).filter(
+        DriveCertification.drive_id == drive_id
+    ).all()
+
+    result = []
+    for dc in drive_certs:
+        cert = db.query(Certification).filter(
+            Certification.id == dc.cert_id
+        ).first()
+        voucher_count = db.query(Voucher).filter(
+            Voucher.drive_id == drive_id,
+            Voucher.cert_id == dc.cert_id
+        ).count()
+
+        result.append({
+            "drive_cert_id": dc.id,
+            "cert_id": dc.cert_id,
+            "cert_name": cert.name if cert else "Unknown",
+            "vouchers_added": dc.vouchers_added,
+            "voucher_count": voucher_count,
+            "voucher_cost": dc.voucher_cost,
+        })
+    return result
+
+# ── Routes ───────────────────────────────────────────────────────────
 
 @router.get("/", response_model=List[DriveResponse])
 def get_drives(
@@ -38,9 +78,8 @@ def get_drive(
         raise HTTPException(status_code=404, detail="Drive not found")
     return drive
 
-
 @router.post("/", response_model=DriveResponse)
-async def create_drive(
+def create_drive(
     request: DriveCreate,
     db: Session = Depends(get_db),
     current_user=Depends(require_role("admin", "coordinator"))
@@ -52,283 +91,20 @@ async def create_drive(
         start_date=request.start_date,
         end_date=request.end_date,
         policy_url=request.policy_url,
-        pass_threshold=request.pass_threshold or 70.0,
         status="draft"
     )
     db.add(drive)
     db.commit()
     db.refresh(drive)
-
     write_audit_log(
         db=db,
         entity_type="Drive",
         entity_id=drive.id,
         action="created",
         actor_id=current_user.id,
-        after={"name": drive.name, "status": drive.status}
+        after={"name": drive.name, "status": "draft"}
     )
     return drive
-
-
-# --- Generate vouchers for all certifications in a drive ---
-@router.post("/{drive_id}/generate-vouchers")
-async def generate_drive_vouchers(
-    drive_id: str,
-    db: Session = Depends(get_db),
-    current_user=Depends(require_role("admin", "coordinator"))
-):
-    """
-    Auto-generate vouchers for all certifications in a drive.
-    Called after certifications are linked.
-    """
-    drive = db.query(Drive).filter(Drive.id == drive_id).first()
-    if not drive:
-        raise HTTPException(status_code=404, detail="Drive not found")
-
-    if not drive.budget or drive.budget <= 0:
-        raise HTTPException(
-            status_code=400,
-            detail="Drive must have a budget to generate vouchers"
-        )
-
-    # Get certifications linked to this drive
-    drive_certs = db.query(DriveCertification).filter(
-        DriveCertification.drive_id == drive_id
-    ).all()
-
-    if not drive_certs:
-        raise HTTPException(
-            status_code=400,
-            detail="Link certifications to drive before generating vouchers"
-        )
-
-    cert_names = []
-    cert_map = {}
-    for dc in drive_certs:
-        cert = db.query(Certification).filter(
-            Certification.id == dc.cert_id
-        ).first()
-        if cert:
-            cert_names.append(cert.name)
-            cert_map[cert.name] = cert.id
-
-    # Calculate distribution
-    distribution = calculate_voucher_distribution(
-        budget=drive.budget,
-        cert_names=cert_names,
-        voucher_cost=1000
-    )
-
-    # Get existing codes to avoid duplicates
-    existing = db.query(Voucher).with_entities(
-        Voucher.masked_code
-    ).all()
-    existing_codes = [v[0] for v in existing if v[0]]
-
-    total_generated = 0
-    result = []
-    expiry = drive.end_date or (datetime.utcnow() + timedelta(days=90))
-
-    for cert_name, count in distribution.items():
-        cert_id = cert_map.get(cert_name)
-
-        # Check existing vouchers for this cert in this drive
-        existing_for_cert = db.query(Voucher).filter(
-            Voucher.drive_id == drive_id,
-            Voucher.cert_id == cert_id
-        ).count()
-
-        if existing_for_cert >= count:
-            result.append({
-                "cert": cert_name,
-                "already_exists": existing_for_cert,
-                "generated": 0
-            })
-            continue
-
-        to_generate = count - existing_for_cert
-
-        # AI generates unique codes
-        codes = await generate_unique_voucher_codes(
-            count=to_generate,
-            cert_name=cert_name,
-            drive_name=drive.name,
-            existing_codes=existing_codes
-        )
-
-        for code in codes:
-            encrypted = encrypt_voucher_code(code)
-            masked = mask_voucher_code(code)
-            existing_codes.append(code)  # track to avoid dups
-
-            voucher = Voucher(
-                id=str(uuid.uuid4()),
-                drive_id=drive_id,
-                cert_id=cert_id,
-                registration_id=None,
-                vendor="Hexaware MAP",
-                code_encrypted=encrypted,
-                masked_code=masked,
-                expiry_date=expiry,
-                status="unassigned"
-            )
-            db.add(voucher)
-            total_generated += 1
-
-        db.commit()
-        result.append({
-            "cert": cert_name,
-            "vouchers_generated": to_generate,
-            "total_for_cert": count
-        })
-
-    write_audit_log(
-        db=db,
-        entity_type="Drive",
-        entity_id=drive_id,
-        action="vouchers_generated",
-        actor_id=current_user.id,
-        after={"total_generated": total_generated, "distribution": result}
-    )
-
-    return {
-        "drive_id": drive_id,
-        "total_generated": total_generated,
-        "budget": drive.budget,
-        "distribution": result
-    }
-
-
-# --- Add more vouchers to a drive ---
-@router.post("/{drive_id}/add-vouchers")
-async def add_more_vouchers(
-    drive_id: str,
-    additional_budget: float,
-    db: Session = Depends(get_db),
-    current_user=Depends(require_role("admin"))
-):
-    """
-    Admin adds more budget → auto-generates additional vouchers.
-    Also increases overall drive budget.
-    """
-    drive = db.query(Drive).filter(Drive.id == drive_id).first()
-    if not drive:
-        raise HTTPException(status_code=404, detail="Drive not found")
-
-    if additional_budget <= 0:
-        raise HTTPException(
-            status_code=400,
-            detail="Additional budget must be greater than 0"
-        )
-
-    # Get certs that are exhausted (all vouchers redeemed)
-    drive_certs = db.query(DriveCertification).filter(
-        DriveCertification.drive_id == drive_id
-    ).all()
-
-    exhausted_certs = []
-    cert_map = {}
-
-    for dc in drive_certs:
-        cert = db.query(Certification).filter(
-            Certification.id == dc.cert_id
-        ).first()
-        if not cert:
-            continue
-
-        cert_map[cert.name] = cert.id
-
-        # Check unassigned vouchers for this cert
-        unassigned = db.query(Voucher).filter(
-            Voucher.drive_id == drive_id,
-            Voucher.cert_id == cert.id,
-            Voucher.status == "unassigned"
-        ).count()
-
-        if unassigned == 0:
-            exhausted_certs.append(cert.name)
-
-    if not exhausted_certs:
-        # Distribute across all certs if none exhausted
-        exhausted_certs = list(cert_map.keys())
-
-    # Calculate new vouchers from additional budget
-    distribution = calculate_voucher_distribution(
-        budget=additional_budget,
-        cert_names=exhausted_certs,
-        voucher_cost=1000
-    )
-
-    # Get existing codes
-    existing = db.query(Voucher).with_entities(Voucher.masked_code).all()
-    existing_codes = [v[0] for v in existing if v[0]]
-
-    total_generated = 0
-    result = []
-    expiry = drive.end_date or (datetime.utcnow() + timedelta(days=90))
-
-    for cert_name, count in distribution.items():
-        cert_id = cert_map.get(cert_name)
-        if not cert_id:
-            continue
-
-        codes = await generate_unique_voucher_codes(
-            count=count,
-            cert_name=cert_name,
-            drive_name=drive.name,
-            existing_codes=existing_codes
-        )
-
-        for code in codes:
-            encrypted = encrypt_voucher_code(code)
-            masked = mask_voucher_code(code)
-            existing_codes.append(code)
-
-            voucher = Voucher(
-                id=str(uuid.uuid4()),
-                drive_id=drive_id,
-                cert_id=cert_id,
-                registration_id=None,
-                vendor="Hexaware MAP",
-                code_encrypted=encrypted,
-                masked_code=masked,
-                expiry_date=expiry,
-                status="unassigned"
-            )
-            db.add(voucher)
-            total_generated += 1
-
-        result.append({
-            "cert": cert_name,
-            "new_vouchers": count
-        })
-
-    # ── Increase drive budget ────────────────────────────────────────
-    old_budget = drive.budget or 0
-    drive.budget = old_budget + additional_budget
-    db.commit()
-
-    write_audit_log(
-        db=db,
-        entity_type="Drive",
-        entity_id=drive_id,
-        action="vouchers_added",
-        actor_id=current_user.id,
-        before={"budget": old_budget},
-        after={
-            "budget": drive.budget,
-            "additional_budget": additional_budget,
-            "vouchers_generated": total_generated
-        }
-    )
-
-    return {
-        "drive_id": drive_id,
-        "additional_budget": additional_budget,
-        "new_total_budget": drive.budget,
-        "vouchers_generated": total_generated,
-        "distribution": result
-    }
 
 @router.put("/{drive_id}", response_model=DriveResponse)
 def update_drive(
@@ -356,9 +132,269 @@ def update_drive(
         action="updated",
         actor_id=current_user.id,
         before=before,
-        after={"name": drive.name, "status": drive.status}
+        after={"name": drive.name}
     )
     return drive
+
+@router.get("/{drive_id}/cert-voucher-status")
+def get_cert_voucher_status(
+    drive_id: str,
+    db: Session = Depends(get_db),
+    current_user=Depends(require_role("admin", "coordinator"))
+):
+    """Get voucher status per certification for a drive."""
+    drive = db.query(Drive).filter(Drive.id == drive_id).first()
+    if not drive:
+        raise HTTPException(status_code=404, detail="Drive not found")
+
+    cert_status = get_drive_cert_status(drive_id, db)
+    all_have_vouchers = all(c["vouchers_added"] for c in cert_status)
+
+    return {
+        "drive_id": drive_id,
+        "drive_name": drive.name,
+        "drive_status": drive.status,
+        "budget_remaining": drive.budget or 0,
+        "certifications": cert_status,
+        "can_activate": all_have_vouchers and len(cert_status) > 0,
+        "missing_vouchers": [
+            c["cert_name"] for c in cert_status
+            if not c["vouchers_added"]
+        ]
+    }
+
+@router.post("/{drive_id}/certifications/{cert_id}/vouchers")
+def add_vouchers_for_cert(
+    drive_id: str,
+    cert_id: str,
+    request: CertVouchersInput,
+    db: Session = Depends(get_db),
+    current_user=Depends(require_role("admin"))
+):
+    """
+    Admin adds voucher codes for a specific certification in a drive.
+    Validates:
+    - Unique codes (no duplicates within submission + existing)
+    - Expiry date > drive start date
+    - Budget sufficient
+    """
+    drive = db.query(Drive).filter(Drive.id == drive_id).first()
+    if not drive:
+        raise HTTPException(status_code=404, detail="Drive not found")
+
+    dc = db.query(DriveCertification).filter(
+        DriveCertification.drive_id == drive_id,
+        DriveCertification.cert_id == cert_id
+    ).first()
+    if not dc:
+        raise HTTPException(
+            status_code=404,
+            detail="Certification not linked to this drive"
+        )
+
+    errors = []
+    warnings = []
+
+    # ── Validate each voucher ────────────────────────────────────────
+    submitted_codes = [v.code.strip().upper() for v in request.vouchers]
+
+    # Check duplicates within submission
+    seen = set()
+    duplicate_in_submission = []
+    for code in submitted_codes:
+        if code in seen:
+            duplicate_in_submission.append(code)
+        seen.add(code)
+
+    if duplicate_in_submission:
+        errors.append({
+            "type": "duplicate_in_submission",
+            "codes": duplicate_in_submission,
+            "message": f"Duplicate codes in your input: {', '.join(duplicate_in_submission)}"
+        })
+
+    # Check duplicates in DB (global)
+    existing_db_codes = []
+    for code in submitted_codes:
+        # Check across all vouchers in system
+        existing = db.query(Voucher).filter(
+            Voucher.masked_code.like(f"%{code[-4:]}")
+        ).all()
+        for v in existing:
+            try:
+                from app.core.security import decrypt_voucher_code
+                decrypted = decrypt_voucher_code(v.code_encrypted)
+                if decrypted.upper() == code:
+                    existing_db_codes.append(code)
+            except:
+                pass
+
+    if existing_db_codes:
+        errors.append({
+            "type": "duplicate_in_system",
+            "codes": existing_db_codes,
+            "message": f"Already exists in system: {', '.join(existing_db_codes)}"
+        })
+
+    # Check expiry dates
+    invalid_expiry = []
+    for v in request.vouchers:
+        if drive.start_date and v.expiry_date.replace(tzinfo=None) <= drive.start_date:
+            invalid_expiry.append(v.code)
+
+    if invalid_expiry:
+        errors.append({
+            "type": "invalid_expiry",
+            "codes": invalid_expiry,
+            "message": f"Expiry must be after drive start date ({drive.start_date.date() if drive.start_date else 'N/A'})"
+        })
+
+    # Check budget
+    total_cost = sum(v.cost for v in request.vouchers)
+    current_budget = drive.budget or 0
+    if total_cost > current_budget:
+        warnings.append({
+            "type": "insufficient_budget",
+            "message": f"Total cost ₹{total_cost} exceeds remaining budget ₹{current_budget}. Add more budget or remove vouchers.",
+            "total_cost": total_cost,
+            "budget_remaining": current_budget
+        })
+
+    # Return errors before saving
+    if errors:
+        return {
+            "success": False,
+            "errors": errors,
+            "warnings": warnings
+        }
+
+    # ── Save vouchers ────────────────────────────────────────────────
+    saved = 0
+    for v in request.vouchers:
+        code_upper = v.code.strip().upper()
+        encrypted = encrypt_voucher_code(code_upper)
+        masked = mask_voucher_code(code_upper)
+
+        voucher = Voucher(
+            id=str(uuid.uuid4()),
+            drive_id=drive_id,
+            cert_id=cert_id,
+            registration_id=None,
+            vendor="Hexaware MAP",
+            code_encrypted=encrypted,
+            masked_code=masked,
+            expiry_date=v.expiry_date.replace(tzinfo=None),
+            status="unassigned"
+        )
+        db.add(voucher)
+        saved += 1
+
+    # Deduct from budget
+    drive.budget = current_budget - total_cost
+
+    # Mark cert as having vouchers
+    dc.vouchers_added = True
+    dc.voucher_cost = total_cost / len(request.vouchers) if request.vouchers else 0
+
+    db.commit()
+
+    write_audit_log(
+        db=db,
+        entity_type="DriveCertification",
+        entity_id=dc.id,
+        action="vouchers_added",
+        actor_id=current_user.id,
+        after={
+            "cert_id": cert_id,
+            "vouchers_added": saved,
+            "total_cost": total_cost,
+            "budget_remaining": drive.budget
+        }
+    )
+
+    return {
+        "success": True,
+        "vouchers_added": saved,
+        "total_cost": total_cost,
+        "budget_remaining": drive.budget,
+        "warnings": warnings
+    }
+
+@router.delete("/{drive_id}/certifications/{cert_id}")
+def remove_certification_from_drive(
+    drive_id: str,
+    cert_id: str,
+    db: Session = Depends(get_db),
+    current_user=Depends(require_role("admin", "coordinator"))
+):
+    """Remove certification from drive — also removes unassigned vouchers."""
+    dc = db.query(DriveCertification).filter(
+        DriveCertification.drive_id == drive_id,
+        DriveCertification.cert_id == cert_id
+    ).first()
+    if not dc:
+        raise HTTPException(status_code=404, detail="Not found")
+
+    # Refund budget from unassigned vouchers
+    unassigned = db.query(Voucher).filter(
+        Voucher.drive_id == drive_id,
+        Voucher.cert_id == cert_id,
+        Voucher.status == "unassigned"
+    ).all()
+
+    drive = db.query(Drive).filter(Drive.id == drive_id).first()
+    if drive and unassigned:
+        # Recalculate refund
+        refund = sum(dc.voucher_cost or 0 for _ in unassigned)
+        drive.budget = (drive.budget or 0) + refund
+
+    # Delete unassigned vouchers only
+    db.query(Voucher).filter(
+        Voucher.drive_id == drive_id,
+        Voucher.cert_id == cert_id,
+        Voucher.status == "unassigned"
+    ).delete()
+
+    db.delete(dc)
+    db.commit()
+
+    return {
+        "message": "Certification removed",
+        "vouchers_removed": len(unassigned),
+        "budget_refunded": refund if drive and unassigned else 0
+    }
+
+@router.post("/{drive_id}/budget/add")
+def add_drive_budget(
+    drive_id: str,
+    request: AddBudgetInput,
+    db: Session = Depends(get_db),
+    current_user=Depends(require_role("admin"))
+):
+    """Admin adds more budget to a drive."""
+    drive = db.query(Drive).filter(Drive.id == drive_id).first()
+    if not drive:
+        raise HTTPException(status_code=404, detail="Drive not found")
+
+    old_budget = drive.budget or 0
+    drive.budget = old_budget + request.amount
+    db.commit()
+
+    write_audit_log(
+        db=db,
+        entity_type="Drive",
+        entity_id=drive_id,
+        action="budget_added",
+        actor_id=current_user.id,
+        before={"budget": old_budget},
+        after={"budget": drive.budget, "added": request.amount}
+    )
+
+    return {
+        "message": f"Budget increased by ₹{request.amount}",
+        "old_budget": old_budget,
+        "new_budget": drive.budget
+    }
 
 @router.patch("/{drive_id}/status")
 def update_drive_status(
@@ -368,10 +404,26 @@ def update_drive_status(
     db: Session = Depends(get_db),
     current_user=Depends(require_role("admin", "coordinator"))
 ):
-    from fastapi import BackgroundTasks
     drive = db.query(Drive).filter(Drive.id == drive_id).first()
     if not drive:
         raise HTTPException(status_code=404, detail="Drive not found")
+
+    # ── Validate before activation ───────────────────────────────────
+    if status == "active":
+        cert_status = get_drive_cert_status(drive_id, db)
+
+        if not cert_status:
+            raise HTTPException(
+                status_code=400,
+                detail="Add at least one certification before activating"
+            )
+
+        missing = [c["cert_name"] for c in cert_status if not c["vouchers_added"]]
+        if missing:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Add vouchers for these certifications first: {', '.join(missing)}"
+            )
 
     before_status = drive.status
     drive.status = status
@@ -387,34 +439,8 @@ def update_drive_status(
         after={"status": status}
     )
 
-    # ── Notify ALL candidates when drive activated ───────────────────
+    # Notify candidates when activated
     if status == "active" and before_status != "active":
-        background_tasks.add_task(
-            _notify_all_candidates_drive_activated,
-            drive_id=drive_id,
-            drive_name=drive.name,
-            drive_end_date=str(drive.end_date.date()) if drive.end_date else "TBD"
-        )
-
-    return {"message": f"Drive status updated to {status}"}
-
-
-def _notify_all_candidates_drive_activated(
-    drive_id: str,
-    drive_name: str,
-    drive_end_date: str
-):
-    """Notify all candidates in system when drive is activated."""
-    from app.database import SessionLocal
-    from app.services.email_service import send_drive_activation_email
-
-    db = SessionLocal()
-    try:
-        candidates = db.query(User).filter(
-            User.role == "candidate"
-        ).all()
-
-        # Get certifications for this drive
         from app.models import DriveCertification, Certification
         drive_certs = db.query(DriveCertification).filter(
             DriveCertification.drive_id == drive_id
@@ -427,11 +453,29 @@ def _notify_all_candidates_drive_activated(
             if cert:
                 cert_names.append(cert.name)
 
-        print(
-            f"[DRIVE-NOTIFY] Notifying {len(candidates)} "
-            f"candidates about {drive_name}"
+        background_tasks.add_task(
+            _notify_all_candidates_drive_activated,
+            drive_id=drive_id,
+            drive_name=drive.name,
+            drive_end_date=str(drive.end_date.date()) if drive.end_date else "TBD",
+            cert_names=cert_names
         )
 
+    return {"message": f"Drive status updated to {status}"}
+
+
+def _notify_all_candidates_drive_activated(
+    drive_id: str,
+    drive_name: str,
+    drive_end_date: str,
+    cert_names: list
+):
+    from app.database import SessionLocal
+    from app.services.email_service import send_drive_activation_email
+    db = SessionLocal()
+    try:
+        candidates = db.query(User).filter(User.role == "candidate").all()
+        print(f"[DRIVE-NOTIFY] Notifying {len(candidates)} candidates")
         for candidate in candidates:
             try:
                 send_drive_activation_email(
@@ -443,8 +487,6 @@ def _notify_all_candidates_drive_activated(
                     portal_url="http://localhost:5173/registrations"
                 )
             except Exception as e:
-                print(
-                    f"[DRIVE-NOTIFY] Failed for {candidate.email}: {e}"
-                )
+                print(f"[DRIVE-NOTIFY] Failed for {candidate.email}: {e}")
     finally:
         db.close()

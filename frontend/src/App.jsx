@@ -106,7 +106,7 @@ function AppRoutes() {
       <Route
         path="/eligibility"
         element={
-          <ProtectedRoute roles={["admin", "coordinator", "approver"]}>
+          <ProtectedRoute roles={["admin", "approver"]}>
             <Layout>
               <Eligibility />
             </Layout>
@@ -116,7 +116,7 @@ function AppRoutes() {
       <Route
         path="/results"
         element={
-          <ProtectedRoute roles={["admin", "coordinator"]}>
+          <ProtectedRoute roles={["admin"]}>
             <Layout>
               <Results />
             </Layout>

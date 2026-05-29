@@ -1,27 +1,14 @@
-import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { useQuery } from "@tanstack/react-query";
 import { getApproverDashboard } from "../../api/dashboard";
-import { approveEligibility } from "../../api/eligibility";
 import { useAuth } from "../../context/AuthContext";
-import { CheckCircle, XCircle, Brain } from "lucide-react";
-import { useState } from "react";
+import { CheckCircle, Brain } from "lucide-react";
 
 export default function ApproverDashboard() {
   const { user } = useAuth();
-  const qc = useQueryClient();
-  const [deciding, setDeciding] = useState(null);
 
   const { data: stats, isLoading } = useQuery({
     queryKey: ["approver-dashboard"],
     queryFn: getApproverDashboard,
-  });
-
-  const approveMutation = useMutation({
-    mutationFn: ({ eligId, decision }) =>
-      approveEligibility(eligId, { decision }),
-    onSuccess: () => {
-      qc.invalidateQueries(["approver-dashboard"]);
-      setDeciding(null);
-    },
   });
 
   if (isLoading) return (
@@ -66,7 +53,7 @@ export default function ApproverDashboard() {
         </div>
       </div>
 
-      {/* Approval queue */}
+      {/* Pending approvals list */}
       <div>
         <h2 className="text-sm font-semibold text-gray-700 mb-3">
           Pending approvals ({stats?.pending_count ?? 0})
@@ -80,37 +67,45 @@ export default function ApproverDashboard() {
             </p>
           </div>
         ) : (
-          <div className="space-y-4">
+          <div className="space-y-3">
             {stats.pending_queue.map((item) => (
-              <div key={item.eligibility_id} className="card space-y-3">
-                {/* Candidate info */}
+              <div key={item.eligibility_id} className="card space-y-2">
                 <div className="flex items-start justify-between">
                   <div>
-                    <p className="font-semibold text-gray-800">
-                      {item.candidate_name}
-                    </p>
-                    <p className="text-xs text-gray-500 mt-0.5">
-                      {item.exam_track} · {item.drive_name} · {item.business_unit}
-                    </p>
+                    <p className="font-semibold text-gray-800">{item.candidate_name}</p>
+                    <p className="text-xs text-gray-500 mt-0.5">{item.candidate_email}</p>
                   </div>
                   <span className="text-xs text-gray-400">
                     {item.created_at
-                      ? new Date(item.created_at).toLocaleDateString()
+                      ? new Date(item.created_at).toLocaleDateString("en-IN", {
+                          day: "numeric", month: "short", year: "numeric"
+                        })
                       : ""}
                   </span>
                 </div>
 
-                {/* AI score */}
+                <div className="flex flex-wrap gap-2 text-xs">
+                  <span className="bg-blue-50 text-blue-700 px-2 py-1 rounded-full border border-blue-200">
+                    {item.exam_track || item.custom_cert_name || "—"}
+                  </span>
+                  <span className="bg-gray-100 text-gray-600 px-2 py-1 rounded-full">
+                    {item.drive_name}
+                  </span>
+                  {item.is_custom_cert && (
+                    <span className="bg-amber-50 text-amber-700 px-2 py-1 rounded-full border border-amber-200">
+                      Custom cert
+                    </span>
+                  )}
+                </div>
+
                 {item.ai_score !== null && (
-                  <div className="bg-blue-50 rounded-xl p-3 space-y-2">
+                  <div className="bg-blue-50 rounded-lg p-3 space-y-1.5">
                     <div className="flex items-center justify-between">
-                      <div className="flex items-center gap-2">
-                        <Brain size={14} className="text-blue-600" />
-                        <span className="text-xs font-medium text-blue-800">
-                          AI eligibility score
-                        </span>
+                      <div className="flex items-center gap-1.5">
+                        <Brain size={13} className="text-blue-600" />
+                        <span className="text-xs font-medium text-blue-800">AI Score</span>
                       </div>
-                      <span className="text-lg font-bold text-blue-600">
+                      <span className="text-sm font-bold text-blue-600">
                         {Math.round((item.ai_score ?? 0) * 100)}%
                       </span>
                     </div>
@@ -123,38 +118,6 @@ export default function ApproverDashboard() {
                     <p className="text-xs text-blue-700">{item.ai_reasons}</p>
                   </div>
                 )}
-
-                {/* Action buttons */}
-                <div className="flex gap-2 pt-1">
-                  <button
-                    onClick={() => {
-                      setDeciding(item.eligibility_id);
-                      approveMutation.mutate({
-                        eligId: item.eligibility_id,
-                        decision: "eligible",
-                      });
-                    }}
-                    disabled={approveMutation.isPending && deciding === item.eligibility_id}
-                    className="flex-1 flex items-center justify-center gap-2 bg-green-600 text-white text-sm py-2 rounded-lg hover:bg-green-700 transition-colors"
-                  >
-                    <CheckCircle size={15} />
-                    Approve
-                  </button>
-                  <button
-                    onClick={() => {
-                      setDeciding(item.eligibility_id);
-                      approveMutation.mutate({
-                        eligId: item.eligibility_id,
-                        decision: "ineligible",
-                      });
-                    }}
-                    disabled={approveMutation.isPending && deciding === item.eligibility_id}
-                    className="flex-1 flex items-center justify-center gap-2 bg-red-500 text-white text-sm py-2 rounded-lg hover:bg-red-600 transition-colors"
-                  >
-                    <XCircle size={15} />
-                    Reject
-                  </button>
-                </div>
               </div>
             ))}
           </div>

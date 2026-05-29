@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { getCandidateDashboard } from "../../api/dashboard";
-import { getMyCertificates, verifyVoucher, startExam, submitExam,completeCourse,downloadCertificate   } from "../../api/exam";
+import { getMyCertificates, completeCourse, downloadCertificate, uploadCertificate } from "../../api/exam";
 import { useAuth } from "../../context/AuthContext";
 import { useNavigate } from "react-router-dom";
 import {
@@ -65,129 +65,85 @@ function TrackerStep({ label, status, detail }) {
   );
 }
 
-// ── Voucher entry + exam start ────────────────────────────────────────
-function ExamStarter({ reg, onSuccess }) {
-  const [step, setStep] = useState("enter"); // enter | verified | started
-  const [code, setCode] = useState("");
-  const [verifyResult, setVerifyResult] = useState(null);
-  const [sessionId, setSessionId] = useState(null);
-  const [error, setError] = useState("");
+// ── Certificate uploader ──────────────────────────────────────────────
+function CertificateUploader({ registrationId, onSuccess }) {
+  const [issuedDate, setIssuedDate] = useState("");
+  const [expiryDate, setExpiryDate] = useState("");
+  const [certNumber, setCertNumber] = useState("");
   const [loading, setLoading] = useState(false);
-  const slotReached = reg.slot_datetime
-    ? new Date(reg.slot_datetime) <= new Date()
-    : true;
+  const [error, setError] = useState("");
 
-  const handleVerify = async () => {
+  const handleSubmit = async () => {
+    if (!issuedDate || !expiryDate) {
+      setError("Please fill in both dates");
+      return;
+    }
     setLoading(true);
     setError("");
     try {
-      const res = await verifyVoucher(reg.registration_id, code);
-      setVerifyResult(res);
-      setStep("verified");
-    } catch (e) {
-      setError(e.response?.data?.detail || "Invalid voucher code");
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const handleStart = async () => {
-    setLoading(true);
-    try {
-      const res = await startExam(reg.registration_id, code);
-      setSessionId(res.session_id);
-      setStep("started");
-      window.open("about:blank", "_blank", "width=1024,height=768");
-    } catch (e) {
-      setError(e.response?.data?.detail || "Cannot start exam yet");
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const handleSubmit = async () => {
-    if (!sessionId) return;
-    setLoading(true);
-    try {
-      await submitExam(sessionId);
+      await uploadCertificate(registrationId, {
+        issued_date: issuedDate,
+        expiry_date: expiryDate,
+        certificate_number: certNumber || undefined,
+      });
       onSuccess();
     } catch (e) {
-      setError(e.response?.data?.detail || "Submit failed");
+      setError(e.response?.data?.detail || "Failed to upload certificate");
     } finally {
       setLoading(false);
     }
   };
 
   return (
-    <div className="bg-blue-50 rounded-xl p-4 space-y-3">
-      <p className="text-sm font-medium text-blue-800">Proceed to Exam</p>
-
-      {step === "enter" && (
-        <>
-          <div className="flex gap-2">
-            <input
-              className="input flex-1 text-sm"
-              placeholder="Enter your redeemed voucher code"
-              value={code}
-              onChange={(e) => setCode(e.target.value)}
-            />
-            <button
-              onClick={handleVerify}
-              disabled={!code || loading}
-              className="bg-blue-600 text-white px-4 py-2 rounded-lg text-sm hover:bg-blue-700 disabled:opacity-50"
-            >
-              {loading ? "Verifying..." : "Verify"}
-            </button>
-          </div>
-          {error && <p className="text-xs text-red-600">{error}</p>}
-        </>
-      )}
-
-      {step === "verified" && verifyResult && (
-        <>
-          {verifyResult.can_start ? (
-            <div className="space-y-2">
-              <p className="text-sm text-green-700 font-medium">
-                Voucher verified. Ready to start!
-              </p>
-              <button
-                onClick={handleStart}
-                disabled={loading}
-                className="w-full bg-green-600 text-white py-2 rounded-lg text-sm hover:bg-green-700"
-              >
-                {loading ? "Starting..." : "Start Exam"}
-              </button>
-            </div>
-          ) : (
-            <div className="bg-amber-50 rounded-lg p-3 space-y-1">
-              <p className="text-xs font-medium text-amber-800">
-                Exam not started yet
-              </p>
-              <p className="text-sm text-amber-700">
-                Starts in: <Countdown slotDatetime={reg.slot_datetime} />
-              </p>
-              <p className="text-xs text-amber-600">
-                Slot: {new Date(reg.slot_datetime).toLocaleString("en-IN")}
-              </p>
-            </div>
-          )}
-        </>
-      )}
-
-      {step === "started" && (
-        <div className="space-y-2">
-          <p className="text-sm text-green-700 font-medium">
-            Exam is in progress in the other window.
-          </p>
-          <button
-            onClick={handleSubmit}
-            disabled={loading}
-            className="w-full bg-red-600 text-white py-2 rounded-lg text-sm hover:bg-red-700"
-          >
-            {loading ? "Submitting..." : "Submit Exam"}
-          </button>
+    <div className="bg-teal-50 border border-teal-200 rounded-xl p-4 space-y-3">
+      <div className="flex items-center gap-2">
+        <Award size={16} className="text-teal-600" />
+        <p className="text-sm font-semibold text-teal-800">Upload Certificate Details</p>
+      </div>
+      <p className="text-xs text-teal-600">
+        Enter the details from your certification to complete your drive registration.
+      </p>
+      <div className="grid grid-cols-2 gap-3">
+        <div>
+          <label className="block text-xs font-medium text-gray-600 mb-1">Issued Date *</label>
+          <input
+            type="date"
+            className="input text-sm"
+            value={issuedDate}
+            onChange={e => setIssuedDate(e.target.value)}
+          />
         </div>
-      )}
+        <div>
+          <label className="block text-xs font-medium text-gray-600 mb-1">Expiry Date *</label>
+          <input
+            type="date"
+            className="input text-sm"
+            value={expiryDate}
+            onChange={e => setExpiryDate(e.target.value)}
+          />
+        </div>
+      </div>
+      <div>
+        <label className="block text-xs font-medium text-gray-600 mb-1">Certificate Number (optional)</label>
+        <input
+          className="input text-sm"
+          placeholder="e.g. AZ900-2024-XXXX"
+          value={certNumber}
+          onChange={e => setCertNumber(e.target.value)}
+        />
+      </div>
+      {error && <p className="text-xs text-red-600">{error}</p>}
+      <button
+        onClick={handleSubmit}
+        disabled={loading || !issuedDate || !expiryDate}
+        className="w-full bg-teal-600 text-white py-2.5 rounded-lg text-sm font-medium hover:bg-teal-700 disabled:opacity-50 flex items-center justify-center gap-2"
+      >
+        {loading ? (
+          <><div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white" />Uploading...</>
+        ) : (
+          <><Award size={14} />Submit Certificate</>
+        )}
+      </button>
     </div>
   );
 }
@@ -224,8 +180,8 @@ function RegistrationCard({ reg, onRefresh }) {
   const getSteps = () => {
     const e = reg.eligibility;
     const v = reg.voucher;
-    const ex = reg.exam_session;
     const cert = reg.certificate;
+    const voucherRedeemed = v?.status === "redeemed";
 
     return [
       {
@@ -237,13 +193,13 @@ function RegistrationCard({ reg, onRefresh }) {
       },
       {
         label: "Eligibility check",
-        status: !e ? "pending"
+        status: !e ? "active"
           : e.decision === "eligible" ? "done"
           : e.decision === "ineligible" ? "failed"
           : "active",
         detail: e
           ? `${e.decision} · AI score: ${Math.round((e.ai_score || 0) * 100)}%`
-          : "Awaiting evaluation",
+          : "AI evaluation in progress...",
       },
       {
         label: "Approval",
@@ -257,55 +213,60 @@ function RegistrationCard({ reg, onRefresh }) {
           : e?.decision === "eligible"
           ? "Approved"
           : e?.decision === "ineligible"
-          ? "Rejected"
+          ? "Rejected — not eligible"
           : null,
       },
       {
-        label: "Course completion",
+        label: "Complete course",
         status: reg.course_completed ? "done"
-          : e?.decision === "eligible" ? "active"
+          : reg.status === "eligible" ? "active"
           : "pending",
         detail: reg.course_completed ? "Course completed" : null,
       },
       {
         label: "Voucher",
         status: !v ? "pending"
-          : v.status === "redeemed" || v.status === "expired" ? "done"
+          : v.status === "redeemed" ? "done"
           : v.status === "issued" ? "active"
           : "pending",
         detail: v
-          ? `${v.status} · ${v.masked_code || ""}`
-          : reg.course_completed ? "Will be issued soon" : null,
+          ? v.status === "issued"
+            ? `Ready to redeem · expires in ${v.days_to_expiry ?? "?"}d`
+            : v.status === "redeemed"
+            ? "Voucher redeemed"
+            : v.status
+          : reg.course_completed ? "Will be allocated soon" : null,
       },
       {
-        label: "Exam",
-        status: !ex ? "pending"
-          : ex.status === "submitted" ? "done"
-          : ex.status === "started" ? "active"
+        label: "Upload certificate",
+        status: cert ? "done"
+          : voucherRedeemed ? "active"
           : "pending",
-        detail: ex?.submitted_at
-          ? `Submitted ${new Date(ex.submitted_at).toLocaleDateString()}`
-          : null,
-      },
-      {
-        label: "Certificate",
-        status: cert ? "done" : "pending",
         detail: cert
           ? `Valid until ${new Date(cert.expiry_date).toLocaleDateString("en-IN")}`
+          : voucherRedeemed
+          ? "Submit your certificate details below"
           : null,
+      },
+      {
+        label: "Completed",
+        status: reg.status === "completed" ? "done" : "pending",
+        detail: reg.status === "completed" ? "Drive completed" : null,
       },
     ];
   };
 
   const statusColor = {
-    submitted: "bg-blue-100 text-blue-700",
+    registered: "bg-blue-100 text-blue-700",
     eligible: "bg-green-100 text-green-700",
     ineligible: "bg-red-100 text-red-700",
     pending_approval: "bg-amber-100 text-amber-700",
+    course_completed: "bg-purple-100 text-purple-700",
+    voucher_allocated: "bg-amber-100 text-amber-700",
+    voucher_redeemed: "bg-teal-100 text-teal-700",
+    completed: "bg-green-100 text-green-700",
     result_pass: "bg-green-100 text-green-700",
     result_fail: "bg-red-100 text-red-700",
-    exam_submitted: "bg-purple-100 text-purple-700",
-    certified: "bg-teal-100 text-teal-700",
   };
 
   return (
@@ -383,68 +344,48 @@ function RegistrationCard({ reg, onRefresh }) {
 
           {/* Action buttons based on stage */}
 
-          {/* Complete Course button */}
-          {reg.eligibility?.decision === "eligible" &&
-           !reg.course_completed &&
-           !reg.voucher && (
+          {/* Complete Course */}
+          {reg.status === "eligible" && !reg.course_completed && (
             <div className="bg-purple-50 rounded-xl p-4 space-y-3">
-              <div className="flex items-start justify-between">
-                <div>
-                  <p className="text-sm font-medium text-purple-800">
-                    Course ready
-                  </p>
-                  <p className="text-xs text-purple-600 mt-0.5">
-                    Mark course as completed to generate your voucher
-                  </p>
-                </div>
+              <div>
+                <p className="text-sm font-medium text-purple-800">Course ready</p>
+                <p className="text-xs text-purple-600 mt-0.5">
+                  Mark your course as completed to get your voucher
+                </p>
               </div>
-              {completeError && (
-                <p className="text-xs text-red-600">{completeError}</p>
-              )}
+              {completeError && <p className="text-xs text-red-600">{completeError}</p>}
               <button
                 onClick={handleCompleteCourse}
                 disabled={completing}
-                className="w-full bg-purple-600 text-white py-2.5 rounded-lg text-sm font-medium hover:bg-purple-700 transition-colors disabled:opacity-50 flex items-center justify-center gap-2"
+                className="w-full bg-purple-600 text-white py-2.5 rounded-lg text-sm font-medium hover:bg-purple-700 disabled:opacity-50 flex items-center justify-center gap-2"
               >
                 {completing ? (
-                  <>
-                    <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white"></div>
-                    Completing course...
-                  </>
+                  <><div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white" />Completing...</>
                 ) : (
-                  <>
-                    <CheckCircle size={15} />
-                    Complete Course
-                  </>
+                  <><CheckCircle size={15} />Mark Course Complete</>
                 )}
               </button>
             </div>
           )}
 
-          {/* Voucher section */}
+          {/* Voucher — redeem */}
           {reg.voucher?.status === "issued" && (
             <div className="bg-amber-50 border border-amber-200 rounded-xl p-4 space-y-3">
               <div className="flex items-center justify-between">
                 <div className="flex items-center gap-2">
                   <Gift size={16} className="text-amber-600" />
-                  <p className="text-sm font-semibold text-amber-800">
-                    Voucher ready
-                  </p>
+                  <p className="text-sm font-semibold text-amber-800">Voucher ready</p>
                 </div>
                 {reg.voucher.days_to_expiry !== null && (
                   <span className={`text-xs font-medium px-2 py-0.5 rounded-full ${
-                    reg.voucher.days_to_expiry <= 3
-                      ? "bg-red-100 text-red-700"
-                      : "bg-amber-100 text-amber-700"
+                    reg.voucher.days_to_expiry <= 3 ? "bg-red-100 text-red-700" : "bg-amber-100 text-amber-700"
                   }`}>
                     Expires in {reg.voucher.days_to_expiry}d
                   </span>
                 )}
               </div>
               <div className="bg-white rounded-lg px-3 py-2 flex items-center justify-between border border-amber-200">
-                <span className="font-mono text-sm text-gray-600">
-                  {reg.voucher.masked_code}
-                </span>
+                <span className="font-mono text-sm text-gray-600">{reg.voucher.masked_code}</span>
                 <span className="text-xs text-gray-400">masked</span>
               </div>
               <a
@@ -459,33 +400,22 @@ function RegistrationCard({ reg, onRefresh }) {
             </div>
           )}
 
-          {/* Proceed to exam */}
-          {(reg.voucher?.status === "redeemed" || reg.voucher?.status === "expired") &&
-           !reg.exam_session && (
-            <ExamStarter reg={reg} onSuccess={onRefresh} />
+          {/* Upload certificate after redeeming voucher */}
+          {reg.voucher?.status === "redeemed" && !reg.certificate && (
+            <CertificateUploader
+              registrationId={reg.registration_id}
+              onSuccess={onRefresh}
+            />
           )}
 
-          {/* Exam submitted — awaiting cert */}
-          {reg.exam_session?.status === "submitted" && !reg.certificate && (
-            <div className="bg-purple-50 rounded-xl p-3 text-center">
-              <p className="text-sm text-purple-700 font-medium">
-                Exam submitted — certificate being processed
-              </p>
-            </div>
-          )}
-
-          {/* Certificate */}
+          {/* Certificate issued */}
           {reg.certificate && (
             <div className="bg-green-50 border border-green-200 rounded-xl p-4 space-y-2">
               <div className="flex items-center gap-2">
                 <Award size={16} className="text-green-600" />
-                <p className="text-sm font-semibold text-green-800">
-                  Certificate issued
-                </p>
+                <p className="text-sm font-semibold text-green-800">Certificate uploaded</p>
                 <span className={`text-xs px-2 py-0.5 rounded-full font-medium ml-auto ${
-                  reg.certificate.status === "active"
-                    ? "bg-green-100 text-green-700"
-                    : "bg-red-100 text-red-700"
+                  reg.certificate.status === "active" ? "bg-green-100 text-green-700" : "bg-red-100 text-red-700"
                 }`}>
                   {reg.certificate.status}
                 </span>
@@ -495,9 +425,9 @@ function RegistrationCard({ reg, onRefresh }) {
                   day: "numeric", month: "long", year: "numeric"
                 })}
               </p>
-              <p className="text-xs text-green-600">
-                {reg.certificate.days_remaining} days remaining
-              </p>
+              {reg.certificate.days_remaining > 0 && (
+                <p className="text-xs text-green-600">{reg.certificate.days_remaining} days remaining</p>
+              )}
               <button
                 onClick={() => downloadCertificate(reg.certificate.id)}
                 className="w-full flex items-center justify-center gap-2 bg-green-600 text-white py-2 rounded-lg text-sm hover:bg-green-700"

@@ -27,8 +27,6 @@ const navItems = {
     { path: "/dashboard", label: "Dashboard", icon: LayoutDashboard },
     { path: "/drives", label: "Drives", icon: FolderOpen },
     { path: "/registrations", label: "Registrations", icon: Users },
-    { path: "/eligibility", label: "Eligibility", icon: CheckCircle },
-    { path: "/results", label: "Results", icon: Award },
     { path: "/audit", label: "Audit Log", icon: FileText },
   ],
   approver: [
@@ -37,7 +35,7 @@ const navItems = {
   ],
   candidate: [
     { path: "/dashboard", label: "Dashboard", icon: LayoutDashboard },
-    { path: "/registrations", label: "My Registrations", icon: Users },
+    { path: "/registrations", label: "Open Drives", icon: FolderOpen },
   ],
 };
 

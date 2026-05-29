@@ -46,3 +46,11 @@ export const downloadCertificate = async (certificateId) => {
   link.remove();
   window.URL.revokeObjectURL(url);
 };
+
+export const uploadCertificate = async (registrationId, data) => {
+  const res = await client.post("/api/exam/upload-certificate", {
+    registration_id: registrationId,
+    ...data,
+  });
+  return res.data;
+};

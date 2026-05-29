@@ -1,6 +1,8 @@
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 from datetime import datetime, timedelta
+from typing import Optional
+from pydantic import BaseModel
 from app.database import get_db
 from app.models import (
     ExamSession, Registration, Voucher,
@@ -376,6 +378,90 @@ def generate_certificate(
         "expiry_date": cert.expiry_date,
         "message": "Certificate generated successfully"
     }
+
+class CertUploadRequest(BaseModel):
+    registration_id: str
+    issued_date: str
+    expiry_date: str
+    certificate_number: Optional[str] = None
+
+@router.post("/upload-certificate")
+def upload_certificate(
+    request: CertUploadRequest,
+    db: Session = Depends(get_db),
+    current_user=Depends(get_current_user)
+):
+    reg = db.query(Registration).filter(
+        Registration.id == request.registration_id,
+        Registration.user_id == current_user.id
+    ).first()
+    if not reg:
+        raise HTTPException(status_code=404, detail="Registration not found")
+
+    voucher = db.query(Voucher).filter(
+        Voucher.registration_id == request.registration_id,
+        Voucher.status == "redeemed"
+    ).first()
+    if not voucher:
+        raise HTTPException(status_code=400, detail="Voucher must be redeemed before uploading certificate")
+
+    existing = db.query(UserCertificate).filter(
+        UserCertificate.registration_id == request.registration_id
+    ).first()
+    if existing:
+        raise HTTPException(status_code=400, detail="Certificate already uploaded")
+
+    try:
+        issued_dt = datetime.strptime(request.issued_date, "%Y-%m-%d")
+        expiry_dt = datetime.strptime(request.expiry_date, "%Y-%m-%d")
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid date format. Use YYYY-MM-DD")
+
+    cert_name = reg.exam_track or reg.custom_cert_name or "Certification"
+
+    cert = UserCertificate(
+        id=str(uuid.uuid4()),
+        user_id=reg.user_id,
+        registration_id=reg.id,
+        drive_id=reg.drive_id,
+        cert_id=reg.cert_id,
+        cert_name=cert_name,
+        issued_date=issued_dt,
+        expiry_date=expiry_dt,
+        status="active"
+    )
+    db.add(cert)
+    reg.status = "completed"
+    db.commit()
+    db.refresh(cert)
+
+    write_audit_log(
+        db=db,
+        entity_type="UserCertificate",
+        entity_id=cert.id,
+        action="uploaded",
+        actor_id=current_user.id,
+        after={"cert_name": cert_name, "registration_id": reg.id}
+    )
+
+    # Send completion email
+    try:
+        drive = db.query(Drive).filter(Drive.id == reg.drive_id).first()
+        from app.services.email_service import send_certificate_completion_email
+        send_certificate_completion_email(
+            to_email=current_user.email,
+            name=current_user.name,
+            cert_name=cert_name,
+            drive_name=drive.name if drive else "Certification Drive",
+            issued_date=issued_dt.strftime("%d %B %Y"),
+            expiry_date=expiry_dt.strftime("%d %B %Y"),
+            certificate_id=cert.id,
+        )
+    except Exception as e:
+        print(f"[CERT-EMAIL] Failed to send completion email: {e}")
+
+    return {"message": "Certificate uploaded successfully", "certificate_id": cert.id, "cert_name": cert_name}
+
 
 @router.get("/certificates/my")
 def get_my_certificates(

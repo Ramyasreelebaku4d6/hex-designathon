@@ -94,6 +94,14 @@ def redeem_voucher(
     voucher.redeemed_at = datetime.utcnow()
     # Invalidate the token link so it can never be used again
     voucher.tokenized_link = f"REDEEMED_{token}"
+    # Update registration status to voucher_redeemed
+    if voucher.registration_id:
+        from app.models import Registration
+        reg = db.query(Registration).filter(
+            Registration.id == voucher.registration_id
+        ).first()
+        if reg:
+            reg.status = "voucher_redeemed"
     db.commit()
 
     # ── Decrypt and return ───────────────────────────────────────────

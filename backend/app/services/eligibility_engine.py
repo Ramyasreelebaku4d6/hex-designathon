@@ -7,7 +7,7 @@ async def evaluate_eligibility(
     registration: Registration,
     db: Session
 ) -> dict:
-    from app.models import ExamSession
+    from app.models import Voucher
 
     user = db.query(User).filter(
         User.id == registration.user_id
@@ -21,25 +21,30 @@ async def evaluate_eligibility(
         tenure_ok = tenure_days >= 90
 
     # ── Rule 2: Attempt limit ────────────────────────────────────────
-    # Count actual exam sessions started for same cert across all drives
+    # Each redeemed voucher for the same cert counts as 1 attempt.
+    cutoff = datetime.utcnow() - timedelta(days=365)
+
     all_user_regs = db.query(Registration).filter(
         Registration.user_id == registration.user_id,
-        Registration.id != registration.id  # exclude current
+        Registration.id != registration.id,
     ).all()
 
-    actual_attempts = 0
-    for r in all_user_regs:
-        is_same_cert = (
+    same_cert_reg_ids = [
+        r.id for r in all_user_regs
+        if (
             (registration.cert_id and r.cert_id == registration.cert_id) or
             (registration.exam_track and r.exam_track and
              registration.exam_track.lower() == r.exam_track.lower())
         )
-        if is_same_cert:
-            sessions = db.query(ExamSession).filter(
-                ExamSession.registration_id == r.id,
-                ExamSession.status.in_(["started", "submitted"])
-            ).count()
-            actual_attempts += sessions
+    ]
+
+    actual_attempts = 0
+    if same_cert_reg_ids:
+        actual_attempts = db.query(Voucher).filter(
+            Voucher.registration_id.in_(same_cert_reg_ids),
+            Voucher.status == "redeemed",
+            Voucher.redeemed_at >= cutoff,
+        ).count()
 
     attempts_ok = actual_attempts < 2
 
