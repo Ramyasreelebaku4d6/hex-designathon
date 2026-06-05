@@ -7,20 +7,50 @@ import {
 import { useAuth } from "../../context/AuthContext";
 import { TrendingUp, Users, Award, DollarSign, Shield, Activity } from "lucide-react";
 
-function StatCard({ label, value, sub, icon: Icon, color = "text-blue-600" }) {
+const iconBg = {
+  blue:   { bg: "#EBF3FF", border: "#C8DFFE", icon: "#0062CC" },
+  teal:   { bg: "#E0F5F3", border: "#9FD8D3", icon: "#008A7C" },
+  green:  { bg: "#ECFDF5", border: "#A7F3D0", icon: "#059669" },
+  purple: { bg: "#EEF2FF", border: "#C7D2FE", icon: "#4F46E5" },
+  amber:  { bg: "#FFFBEB", border: "#FDE68A", icon: "#D97706" },
+};
+
+function StatCard({ label, value, sub, icon: Icon, color = "blue" }) {
+  const c = iconBg[color] || iconBg.blue;
   return (
-    <div className="card flex items-start gap-3">
-      <div className={`p-2 rounded-lg bg-blue-50 ${color}`}>
-        <Icon size={18} />
+    <div className="card group hover:-translate-y-1 transition-all duration-300 animate-fade-in">
+      <div className="flex items-start gap-4">
+        <div
+          className="w-11 h-11 rounded-xl flex items-center justify-center flex-shrink-0 transition-all duration-200 group-hover:scale-105"
+          style={{ background: c.bg, border: `1.5px solid ${c.border}` }}
+        >
+          <Icon size={19} style={{ color: c.icon }} strokeWidth={2} />
+        </div>
+        <div className="min-w-0 flex-1">
+          <p className="section-label">{label}</p>
+          <p className="stat-value mt-1">{value}</p>
+          {sub && (
+            <p className="text-xs text-[#4A5E7D] mt-1 font-semibold truncate">{sub}</p>
+          )}
+        </div>
       </div>
-      <div>
-        <p className="text-xs text-gray-500 mb-0.5">{label}</p>
-        <p className={`text-2xl font-bold ${color}`}>{value}</p>
-        {sub && <p className="text-xs text-gray-400 mt-0.5">{sub}</p>}
-      </div>
+      {/* accent line on hover */}
+      <div
+        className="mt-4 h-0.5 rounded-full opacity-0 group-hover:opacity-100 transition-opacity duration-300"
+        style={{ background: `linear-gradient(90deg, ${c.icon}, transparent)` }}
+      />
     </div>
   );
 }
+
+const chartTooltipStyle = {
+  backgroundColor: "#ffffff",
+  borderRadius: "12px",
+  border: "1px solid #DDE5F4",
+  boxShadow: "0 4px 16px rgba(7,23,41,0.08)",
+  fontSize: "12px",
+  fontWeight: 600,
+};
 
 export default function AdminDashboard() {
   const { user } = useAuth();
@@ -38,88 +68,88 @@ export default function AdminDashboard() {
   });
 
   if (isLoading) return (
-    <div className="flex items-center justify-center h-64">
-      <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600"></div>
+    <div className="flex flex-col items-center justify-center h-64 gap-3">
+      <div className="w-10 h-10 rounded-full border-2 border-[#DDE5F4] border-t-primary animate-spin" />
+      <p className="text-xs text-[#8FA3BF] font-semibold uppercase tracking-widest">Loading dashboard...</p>
     </div>
   );
 
-  const COLORS = ["#378ADD", "#1D9E75", "#BA7517", "#534AB7", "#D85A30"];
+  const CHART_COLORS = ["#0062CC", "#00A896", "#F59E0B", "#6366F1", "#EC4899"];
 
   return (
-    <div className="space-y-6">
-      <div className="flex items-center justify-between">
+    <div className="space-y-7 animate-fade-in">
+      {/* ── Page header ──────────────────────────── */}
+      <div className="flex items-start justify-between">
         <div>
-          <h1 className="text-2xl font-bold text-gray-800">Admin Dashboard</h1>
-          <p className="text-gray-500 text-sm mt-1">
-            Welcome, {user?.name} — full platform overview
+          <h1 className="page-title">Admin Dashboard</h1>
+          <p className="page-subtitle">
+            Welcome back, <span className="font-bold text-[#0B1837]">{user?.name}</span> — MAP certification drive snapshot
           </p>
         </div>
-        <span className="bg-blue-50 text-blue-700 text-xs font-medium px-3 py-1.5 rounded-full border border-blue-200">
-          Admin
+        <span className="badge-blue px-4 py-1.5 uppercase tracking-widest text-[10px] font-bold">
+          System Admin
         </span>
       </div>
 
-      {/* KPI Cards */}
-      <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
+      {/* ── KPI Strip ────────────────────────────── */}
+      <div className="grid grid-cols-2 md:grid-cols-3 gap-5">
         <StatCard
-          label="Total drives"
+          label="Total Drives"
           value={stats?.total_drives ?? 0}
-          sub={`${stats?.active_drives ?? 0} active`}
+          sub={`${stats?.active_drives ?? 0} currently active`}
           icon={Activity}
-          color="text-blue-600"
+          color="blue"
         />
         <StatCard
-          label="Total registrations"
+          label="Total Registrations"
           value={stats?.total_registrations ?? 0}
-          sub={`${stats?.eligible_count ?? 0} eligible`}
+          sub={`${stats?.eligible_count ?? 0} eligible candidates`}
           icon={Users}
-          color="text-teal-600"
+          color="teal"
         />
         <StatCard
-          label="Certified employees"
+          label="Certified Employees"
           value={stats?.passed_count ?? 0}
-          sub={`${stats?.failed_count ?? 0} failed`}
+          sub={`${stats?.failed_count ?? 0} failed attempts`}
           icon={Award}
-          color="text-green-600"
+          color="green"
         />
         <StatCard
-          label="Vouchers issued"
+          label="Vouchers Issued"
           value={stats?.vouchers_issued ?? 0}
           sub={`${stats?.vouchers_redeemed ?? 0} redeemed`}
           icon={Shield}
-          color="text-purple-600"
+          color="purple"
         />
         <StatCard
-          label="Budget spent"
+          label="Budget Spent"
           value={`₹${(stats?.budget_total ?? 0).toLocaleString()}`}
           sub={`₹${stats?.roi_cost_per_certified ?? 0} per certified`}
           icon={DollarSign}
-          color="text-amber-600"
+          color="amber"
         />
         <StatCard
-          label="SLA compliance"
+          label="SLA Compliance"
           value={`${stats?.sla_compliance_pct ?? 0}%`}
-          sub="ACK emails ≤5 min"
+          sub="Email alerts ≤ 5 mins"
           icon={TrendingUp}
-          color="text-green-600"
+          color="green"
         />
       </div>
 
-      {/* Charts */}
+      {/* ── Charts ───────────────────────────────── */}
       <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
         <div className="card">
-          <h2 className="text-sm font-semibold text-gray-700 mb-4">
-            Drive funnel
-          </h2>
+          <p className="section-label mb-5">Drive Funnel</p>
           <ResponsiveContainer width="100%" height={220}>
             <BarChart data={funnel || []} layout="vertical">
-              <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
-              <XAxis type="number" tick={{ fontSize: 11 }} />
-              <YAxis dataKey="stage" type="category" tick={{ fontSize: 11 }} width={100} />
-              <Tooltip />
+              <CartesianGrid strokeDasharray="3 3" stroke="#F0F4FA" />
+              <XAxis type="number" tick={{ fill: "#8FA3BF", fontSize: 11, fontWeight: 600 }} axisLine={false} tickLine={false} />
+              <YAxis dataKey="stage" type="category" tick={{ fill: "#4A5E7D", fontSize: 10, fontWeight: 700 }} width={105} axisLine={false} tickLine={false} />
+              <Tooltip contentStyle={chartTooltipStyle} cursor={{ fill: "#F2F5FC" }} />
               <Bar dataKey="count" radius={[0, 6, 6, 0]}>
                 {(funnel || []).map((_, i) => (
-                  <Cell key={i} fill={COLORS[i % COLORS.length]} />
+                  <Cell key={i} fill={CHART_COLORS[i % CHART_COLORS.length]} />
                 ))}
               </Bar>
             </BarChart>
@@ -127,18 +157,16 @@ export default function AdminDashboard() {
         </div>
 
         <div className="card">
-          <h2 className="text-sm font-semibold text-gray-700 mb-4">
-            Pass / fail overview
-          </h2>
+          <p className="section-label mb-5">Pass / Fail Overview</p>
           <ResponsiveContainer width="100%" height={220}>
             <BarChart data={passFail || []}>
-              <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
-              <XAxis dataKey="outcome" tick={{ fontSize: 13 }} />
-              <YAxis tick={{ fontSize: 13 }} />
-              <Tooltip />
+              <CartesianGrid strokeDasharray="3 3" stroke="#F0F4FA" />
+              <XAxis dataKey="outcome" tick={{ fill: "#4A5E7D", fontSize: 11, fontWeight: 700 }} axisLine={false} tickLine={false} />
+              <YAxis tick={{ fill: "#8FA3BF", fontSize: 11, fontWeight: 600 }} axisLine={false} tickLine={false} />
+              <Tooltip contentStyle={chartTooltipStyle} cursor={{ fill: "#F2F5FC" }} />
               <Bar dataKey="count" radius={[6, 6, 0, 0]}>
                 {(passFail || []).map((e, i) => (
-                  <Cell key={i} fill={e.outcome === "Pass" ? "#1D9E75" : "#E24B4A"} />
+                  <Cell key={i} fill={e.outcome === "Pass" ? "#00A896" : "#F87171"} />
                 ))}
               </Bar>
             </BarChart>
@@ -146,22 +174,36 @@ export default function AdminDashboard() {
         </div>
       </div>
 
-      {/* Voucher utilization */}
+      {/* ── Voucher Pool ─────────────────────────── */}
       <div className="card">
-        <h2 className="text-sm font-semibold text-gray-700 mb-3">
-          Voucher pool summary
-        </h2>
+        <p className="section-label mb-5">Voucher Pool Summary</p>
         <div className="grid grid-cols-3 gap-4">
           {[
-            { label: "Unassigned", value: stats?.vouchers_unassigned ?? 0, color: "bg-gray-100 text-gray-700" },
-            { label: "Issued", value: stats?.vouchers_issued ?? 0, color: "bg-blue-100 text-blue-700" },
-            { label: "Redeemed", value: stats?.vouchers_redeemed ?? 0, color: "bg-green-100 text-green-700" },
-          ].map(item => (
-            <div key={item.label} className={`rounded-lg p-3 text-center ${item.color}`}>
-              <p className="text-2xl font-bold">{item.value}</p>
-              <p className="text-xs mt-1">{item.label}</p>
-            </div>
-          ))}
+            { label: "Unassigned", value: stats?.vouchers_unassigned ?? 0, bg: "#F2F5FC", border: "#DDE5F4", text: "#4A5E7D", bar: "#8FA3BF" },
+            { label: "Issued", value: stats?.vouchers_issued ?? 0, bg: "#EBF3FF", border: "#C8DFFE", text: "#0062CC", bar: "#0062CC" },
+            { label: "Redeemed", value: stats?.vouchers_redeemed ?? 0, bg: "#E0F5F3", border: "#9FD8D3", text: "#008A7C", bar: "#00A896" },
+          ].map(item => {
+            const total = (stats?.vouchers_unassigned ?? 0) + (stats?.vouchers_issued ?? 0) + (stats?.vouchers_redeemed ?? 0);
+            const pct = total > 0 ? Math.round((item.value / total) * 100) : 0;
+            return (
+              <div
+                key={item.label}
+                className="rounded-xl p-5 border text-center transition-all duration-300 hover:shadow-card-hover hover:-translate-y-0.5"
+                style={{ background: item.bg, borderColor: item.border }}
+              >
+                <p className="text-3xl font-extrabold tracking-tight" style={{ color: item.text }}>
+                  {item.value}
+                </p>
+                <p className="text-[10px] mt-1.5 font-bold uppercase tracking-widest" style={{ color: item.text, opacity: 0.7 }}>
+                  {item.label}
+                </p>
+                <div className="mt-3 h-1 bg-white/60 rounded-full overflow-hidden">
+                  <div className="h-full rounded-full transition-all duration-700" style={{ width: `${pct}%`, background: item.bar }} />
+                </div>
+                <p className="text-[10px] mt-1 font-semibold" style={{ color: item.text, opacity: 0.6 }}>{pct}%</p>
+              </div>
+            );
+          })}
         </div>
       </div>
     </div>
